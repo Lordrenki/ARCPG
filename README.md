@@ -2,6 +2,12 @@
 
 ARCPG is a production-ready Discord idle RPG bot with extraction-run gameplay loops inspired by high-stakes scavenging fiction.
 
+## Stack
+
+- **Language**: Python
+- **Bot framework**: discord.py 2.x slash commands
+- **DB**: PostgreSQL + SQLAlchemy + Alembic
+
 ## Folder Structure
 
 ```text
@@ -11,7 +17,6 @@ arkpg/
       admin.py
       gameplay.py
     client.py
-    views.py
   core/
     config.py
     logging.py
@@ -24,63 +29,57 @@ arkpg/
     deployments.py
     economy.py
     loot.py
+    progression.py
+    quest_catalog.py
+    title_catalog.py
     service.py
-  scripts/
-    simulate_deployments.py
 alembic/
   versions/
     0001_init.py
-  env.py
-  script.py.mako
+    0002_progression_systems.py
 tests/
   test_deployments.py
   test_economy.py
   test_loot.py
+  test_profile.py
   test_trade.py
-Dockerfile
-docker-compose.yml
-.env.example
-pyproject.toml
 ```
 
-## Core Features
+## New Major Features
 
-- Slash-command only Discord UX.
-- Ephemeral responses for sensitive data (`/claim`, `/inventory`, `/trade`).
-- Idle progression with anti-abuse caps and diminishing returns.
-- Deployment/extraction loop with deterministic RNG seeds for auditability.
-- Rarity tiers and color mapping:
-  - Common (Grey)
-  - Uncommon (Green)
-  - Rare (Blue)
-  - Epic (Purple/Pink)
-  - Legendary (Orange)
-- Gear durability hooks and repair-ready schema fields.
-- Squads, duels, secure trade confirmation flow, customizable user profiles, leaderboard, and admin moderation tools.
-- PostgreSQL schema + Alembic migrations.
-- Audit log stream for suspicious behavior.
+### A) Earnable Titles
+- 40+ gameplay-earned titles across Raider, Crafter, Trader, Expedition, Squad, PvP, Collector, Events.
+- Hidden-title support (10+ hidden) and inspectable progress via rule functions.
+- `/titles_list`, `/titles_inspect`, `/title_equip`.
+- Profile now shows equipped title + editable tagline.
 
-## Commands (slash)
+### B) Expedition Project System
+- Multi-stage seasonal expedition with donation-based progression.
+- Transactional item/credit donations with row locks and contribution scoring.
+- Departure window with permanent rewards + temporary stacked buffs.
+- Catch-up state support for missed permanent progression.
+- Commands:
+  - `/expedition_status`
+  - `/expedition_donate_item`
+  - `/expedition_donate_credits`
+  - `/expedition_depart`
+  - `/expedition_rewards`
+  - `/expedition_catchup_status`
+  - Admin: `/expedition_start`, `/expedition_end`, `/expedition_configure`
 
-### Player
-- `/claim`
-- `/deploy <zone>`
-- `/extract`
-- `/inventory`
-- `/squad_create <name>`
-- `/squad_join <name>`
-- `/squad_leave`
-- `/duel <@user>`
-- `/trade <@user> <offered_credits> <requested_credits>`
-- `/trade_confirm <trade_id>`
-- `/profile`
-- `/profile_set [callsign] [title] [bio]`
-- `/leaderboard`
+### C) Quest System (+ 3 Non-raid Activities)
+- 30 quests across 5 chapters (6 each), sequential progression with milestone rewards.
+- Quest requirements support counters, activity completion, rarity/foundIn collection, and multi requirements.
+- Added deterministic seeded activities:
+  - `/scavenge` (short cooldown, low-risk loot)
+  - `/salvage` (recycle items for scraps + rare refined jackpot)
+  - `/courier <stake>` (timed risk/reward credits run)
+- Unified EventBus updates quests and titles from emitted gameplay events.
 
-### Admin (Manage Server required)
-- `/config`
-- `/wipe <@user>`
-- `/anti_exploit_log`
+## Items Seeding
+- Seeder uses `/mnt/data/items.json` for item metadata.
+- Rarity normalization: `common/uncommon/rare/epic/legendary`, null/malformed rarity defaults to `common`.
+- If file is unavailable in local/dev environment, a tiny fallback seed is used to keep the bot bootable.
 
 ## Setup
 
@@ -88,41 +87,22 @@ pyproject.toml
    ```bash
    cp .env.example .env
    ```
-2. Fill in `DISCORD_TOKEN` in `.env`.
+2. Fill in `DISCORD_TOKEN` and DB connection values.
 3. Start services:
    ```bash
    docker compose up --build
    ```
-4. Run migrations (inside bot container shell):
+4. Run migrations:
    ```bash
    alembic upgrade head
    ```
+5. Start the bot:
+   ```bash
+   python -m arkpg.main
+   ```
 
-## Local Dev
+## Notes
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
-pytest
-python -m arkpg.scripts.simulate_deployments
-```
-
-## Balancing Knobs
-
-- `IDLE_CLAIM_CAP_HOURS`: Maximum idle accumulation window.
-- `IDLE_XP_PER_MINUTE`, `IDLE_CREDITS_PER_MINUTE`: Passive baseline.
-- Zone risk/reward in `arkpg/game/constants.py`.
-- Rarity weights in `arkpg/game/constants.py`.
-- Deployment duration per zone in `arkpg/game/constants.py`.
-- Repair pressure can be tuned by `durability_loss` in deployment resolver.
-- Economy-wide scalar via `ECONOMY_MULTIPLIER` and guild config override.
-
-## Supporter Perks (non-pay-to-win)
-
-Config supports optional monetization toggles (`SUPPORTER_FEATURES_ENABLED`, `monetization_enabled`) for:
-- cosmetic badges/titles,
-- QoL stash size/loadout slots,
-- supporter-only cosmetic missions.
-
-Combat power is intentionally unaffected.
+- Monetization remains non-pay-to-win.
+- Titles in this system are gameplay-earned only.
+- RNG-relevant loops store deterministic seeds for auditability.
