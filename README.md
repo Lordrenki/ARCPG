@@ -101,6 +101,15 @@ tests/
    python -m arkpg.main
    ```
 
+## Pterodactyl / Bot-Hosting.net startup note
+
+- This repo includes a `requirements.txt` so hosts that auto-run `pip install -r ...`
+  install all runtime dependencies before launch.
+- Ensure your panel startup variable points to `requirements.txt` (often named
+  `REQUIREMENTS_FILE`).
+- If you see `ModuleNotFoundError: No module named 'discord'`, dependency install
+  was skipped; rerun install or restart after fixing the requirements file path.
+
 ## Notes
 
 - Monetization remains non-pay-to-win.
