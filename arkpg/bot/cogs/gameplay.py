@@ -3,6 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 from sqlalchemy import and_, select
 
+from arkpg.bot.views import PaginatedEmbedView
 from arkpg.core.config import get_settings
 from arkpg.db.models import (
     Expedition,
@@ -33,6 +34,46 @@ class GameplayCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.settings = get_settings()
+
+
+
+    @app_commands.command(description="Initialize your operator profile and open the quick-start guide.")
+    async def start(self, interaction: discord.Interaction) -> None:
+        async with SessionLocal() as session:
+            existing = (await session.execute(select(User).where(User.discord_id == interaction.user.id))).scalar_one_or_none()
+            user = await get_or_create_user(session, interaction.user.id)
+            await SeederService.ensure_seed_data(session)
+            await session.commit()
+
+        profile = normalized_profile(user)
+        pages: list[discord.Embed] = []
+
+        page1 = discord.Embed(title="Welcome to ARCPG", color=0x5865F2)
+        page1.description = "Your operator record is now initialized."
+        page1.add_field(name="Status", value="Existing operator detected." if existing else "New operator created.", inline=False)
+        page1.add_field(name="Callsign", value=profile["callsign"], inline=False)
+        page1.add_field(name="Next", value="Use the **Next** button for a quick tour.", inline=False)
+        page1.set_footer(text="Page 1/3")
+        pages.append(page1)
+
+        page2 = discord.Embed(title="Core Loop", color=0x3498DB)
+        page2.description = "Run missions, recover loot, and improve your build over time."
+        page2.add_field(name="1) /deploy", value="Start a run in Residential, Industrial, or ARC Site.", inline=False)
+        page2.add_field(name="2) /extract", value="Collect loot and rewards after the timer finishes.", inline=False)
+        page2.add_field(name="3) /claim", value="Collect idle XP and credits between active runs.", inline=False)
+        page2.set_footer(text="Page 2/3")
+        pages.append(page2)
+
+        page3 = discord.Embed(title="Profile & Social", color=0x9B59B6)
+        page3.description = "Customize identity and progress with other players."
+        page3.add_field(name="Profile", value="Use **/profile** and **/profile_set** to edit callsign, tagline, and bio.", inline=False)
+        page3.add_field(name="Progression", value="Use **/titles_list**, **/titles_inspect**, and **/title_equip**.", inline=False)
+        page3.add_field(name="Multiplayer", value="Try **/squad_create**, **/squad_join**, and **/trade**.", inline=False)
+        page3.set_footer(text="Page 3/3")
+        pages.append(page3)
+
+        view = PaginatedEmbedView(owner_id=interaction.user.id, pages=pages)
+        await interaction.response.send_message(embed=view.current_embed(), view=view, ephemeral=True)
 
     @app_commands.command(description="Claim your idle XP and credits.")
     async def claim(self, interaction: discord.Interaction) -> None:
