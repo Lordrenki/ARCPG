@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
 
@@ -62,6 +62,16 @@ class Settings(BaseSettings):
     deployment_auto_extract_minutes: int = Field(default=60, alias="DEPLOYMENT_AUTO_EXTRACT_MINUTES")
     supporter_features_enabled: bool = Field(default=True, alias="SUPPORTER_FEATURES_ENABLED")
     economy_multiplier: float = Field(default=1.0, alias="ECONOMY_MULTIPLIER")
+
+    @field_validator("database_url", "database_host", "database_name", "database_user", "database_password", mode="before")
+    @classmethod
+    def normalize_db_text_values(cls, value: str | None) -> str | None:
+        if not isinstance(value, str):
+            return value
+        cleaned = value.strip()
+        if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {"'", '"'}:
+            cleaned = cleaned[1:-1].strip()
+        return cleaned
 
     @model_validator(mode="after")
     def validate_database_settings(self) -> "Settings":
