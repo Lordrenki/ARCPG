@@ -121,6 +121,34 @@ If any are missing, startup now exits early with a clear message listing exactly
 - If you see `ModuleNotFoundError: No module named 'discord'`, dependency install
   was skipped; rerun install or restart after fixing the requirements file path.
 
+## Bot-Hosting.net: "I only have a Discord token" quick fix
+
+If startup says `Missing required environment variables: DATABASE_URL, DISCORD_TOKEN`,
+your bot token alone is not enough. ARCPG needs a SQL database connection string.
+
+1. In **Databases** in Bot-Hosting.net, click **New Database**.
+2. Create either PostgreSQL or MySQL credentials (host, port, database, username, password).
+3. In your server startup/environment variables set:
+   - `DISCORD_TOKEN` (or `BOT_TOKEN` / `TOKEN`)
+   - `DATABASE_URL`
+4. Use one of these URL formats:
+   - PostgreSQL (recommended):
+     `postgresql+asyncpg://USER:PASSWORD@HOST:PORT/DBNAME`
+   - MySQL:
+     `mysql+aiomysql://USER:PASSWORD@HOST:PORT/DBNAME`
+5. If your panel only shows a JDBC string (starts with `jdbc:mysql://...`), remove `jdbc:` and change the prefix to `mysql+aiomysql://`.
+6. If your DB password contains special characters (for example `@`, `/`, `:`), URL-encode the password portion before putting it into `DATABASE_URL`.
+7. Restart the bot.
+
+Example conversion for a Bot-Hosting MySQL endpoint like `us.mysql.db.bot-hosting.net:3306`:
+
+```env
+DISCORD_TOKEN=your_discord_bot_token_here
+DATABASE_URL=mysql+aiomysql://DB_USER:DB_PASSWORD@us.mysql.db.bot-hosting.net:3306/DB_NAME
+```
+
+`REDIS_URL` is optional in this project and defaults to `redis://localhost:6379/0`.
+
 ## Notes
 
 - Monetization remains non-pay-to-win.
