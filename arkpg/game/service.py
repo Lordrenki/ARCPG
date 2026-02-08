@@ -20,6 +20,7 @@ from arkpg.db.models import (
 )
 from arkpg.game.deployments import deployment_end, make_seed, resolve_deployment
 from arkpg.game.economy import compute_idle_rewards, level_from_xp
+from arkpg.game.progression import EventBus
 
 
 async def get_or_create_user(session: AsyncSession, discord_id: int) -> User:
@@ -27,7 +28,7 @@ async def get_or_create_user(session: AsyncSession, discord_id: int) -> User:
     user = result.scalar_one_or_none()
     if user:
         return user
-    user = User(discord_id=discord_id)
+    user = User(discord_id=discord_id, progression_json={})
     session.add(user)
     await session.flush()
     return user
@@ -110,6 +111,7 @@ async def extract_deployment(session: AsyncSession, discord_id: int, auto: bool 
             session.add(Inventory(user_id=user.id, item_id=item.id, qty=loot["qty"]))
 
     session.add(AuditLog(event_type="deployment_resolved", payload={"discord_id": discord_id, "deployment_id": dep.id, "resolution": resolution.__dict__}))
+    await EventBus.emit(session, user, "EXTRACT_SUCCESS" if resolution.status != "failure" else "RAID_COMPLETED", {"counter_updates": {"raid_clears": 1 if resolution.status != "failure" else 0, "legendary_finds": sum(1 for x in resolution.loot if x["rarity"] == "legendary"), "extract_streak": 1 if resolution.status != "failure" else -int((user.progression_json or {}).get("extract_streak",0))}})
     await session.commit()
     return resolution.__dict__
 
