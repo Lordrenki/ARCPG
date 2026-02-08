@@ -1,6 +1,6 @@
-# ARKPG
+# ARCPG
 
-ARKPG is a production-ready Discord idle RPG bot with extraction-run gameplay loops inspired by high-stakes scavenging fiction.
+ARCPG is a production-ready Discord idle RPG bot with extraction-run gameplay loops inspired by high-stakes scavenging fiction.
 
 ## Folder Structure
 
@@ -56,7 +56,7 @@ pyproject.toml
   - Epic (Purple/Pink)
   - Legendary (Orange)
 - Gear durability hooks and repair-ready schema fields.
-- Squads, duels, secure trade confirmation flow, leaderboard, and admin moderation tools.
+- Squads, duels, secure trade confirmation flow, customizable user profiles, leaderboard, and admin moderation tools.
 - PostgreSQL schema + Alembic migrations.
 - Audit log stream for suspicious behavior.
 
@@ -73,6 +73,8 @@ pyproject.toml
 - `/duel <@user>`
 - `/trade <@user> <offered_credits> <requested_credits>`
 - `/trade_confirm <trade_id>`
+- `/profile`
+- `/profile_set [callsign] [title] [bio]`
 - `/leaderboard`
 
 ### Admin (Manage Server required)
