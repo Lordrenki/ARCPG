@@ -165,6 +165,10 @@ DB_PASSWORD=your_raw_password
 
 If both `DATABASE_URL` and `DB_*` values are set, `DB_*` takes precedence.
 
+Some host panels expose these as `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_DATABASE`,
+`MYSQL_USER`, `MYSQL_PASSWORD` (or Postgres-style `PG*` / `POSTGRES_*` names).
+ARCPG accepts those aliases as well.
+
 ## Notes
 
 - Monetization remains non-pay-to-win.

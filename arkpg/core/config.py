@@ -19,11 +19,39 @@ class Settings(BaseSettings):
 
     discord_token: str = Field(validation_alias=AliasChoices("DISCORD_TOKEN", "BOT_TOKEN", "TOKEN"))
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
-    database_host: str | None = Field(default=None, alias="DB_HOST")
-    database_port: int | None = Field(default=None, alias="DB_PORT")
-    database_name: str | None = Field(default=None, alias="DB_NAME")
-    database_user: str | None = Field(default=None, alias="DB_USER")
-    database_password: str | None = Field(default=None, alias="DB_PASSWORD")
+    database_host: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("DB_HOST", "MYSQL_HOST", "MYSQLHOST", "PGHOST", "POSTGRES_HOST"),
+    )
+    database_port: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("DB_PORT", "MYSQL_PORT", "MYSQLPORT", "PGPORT", "POSTGRES_PORT"),
+    )
+    database_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "DB_NAME",
+            "MYSQL_DATABASE",
+            "MYSQLDATABASE",
+            "PGDATABASE",
+            "POSTGRES_DB",
+            "POSTGRES_DATABASE",
+        ),
+    )
+    database_user: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("DB_USER", "MYSQL_USER", "MYSQLUSER", "PGUSER", "POSTGRES_USER"),
+    )
+    database_password: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "DB_PASSWORD",
+            "MYSQL_PASSWORD",
+            "MYSQLPASSWORD",
+            "PGPASSWORD",
+            "POSTGRES_PASSWORD",
+        ),
+    )
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
     bot_log_level: str = Field(default="INFO", alias="BOT_LOG_LEVEL")
     sync_commands_guild_id: int | None = Field(default=None, alias="SYNC_COMMANDS_GUILD_ID")
