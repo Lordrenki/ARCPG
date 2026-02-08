@@ -52,3 +52,16 @@ def test_resolved_database_url_supports_host_panel_mysql_aliases() -> None:
     assert settings.resolved_database_url.startswith("mysql+aiomysql://botuser:")
     assert "p%40ss%2Fword%3A+" in settings.resolved_database_url
     assert settings.resolved_database_url.endswith("@us.mysql.db.bot-hosting.net:3306/game")
+
+
+def test_resolved_database_url_strips_wrapping_quotes_from_db_values() -> None:
+    settings = Settings(
+        DISCORD_TOKEN="token",
+        DB_HOST='"us.mysql.db.bot-hosting.net"',
+        DB_PORT=3306,
+        DB_NAME="'game'",
+        DB_USER='"botuser"',
+        DB_PASSWORD="'secret'",
+    )
+
+    assert settings.resolved_database_url == "mysql+aiomysql://botuser:secret@us.mysql.db.bot-hosting.net:3306/game"
