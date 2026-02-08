@@ -87,7 +87,7 @@ tests/
    ```bash
    cp .env.example .env
    ```
-2. Fill in `DISCORD_TOKEN` and DB connection values.
+2. Fill in `DISCORD_TOKEN` and DB connection values (on some hosts you can use `BOT_TOKEN`/`TOKEN` instead).
 3. Start services:
    ```bash
    docker compose up --build
@@ -100,6 +100,17 @@ tests/
    ```bash
    python -m arkpg.main
    ```
+
+
+## Required Environment Variables
+
+At startup, ARCPG requires these variables to exist in the host panel/environment (or in `.env`):
+
+- `DISCORD_TOKEN` (or `BOT_TOKEN` / `TOKEN`)
+- `DATABASE_URL`
+- `REDIS_URL`
+
+If any are missing, startup now exits early with a clear message listing exactly which variables are missing.
 
 ## Pterodactyl / Bot-Hosting.net startup note
 

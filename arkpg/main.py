@@ -2,6 +2,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+from pydantic import ValidationError
+
 # Allow running this file directly (e.g. `python arkpg/main.py`) in hosting
 # environments that don't start it as a module.
 if __package__ is None or __package__ == "":
@@ -23,7 +25,25 @@ async def main() -> None:
             ) from exc
         raise
 
-    settings = get_settings()
+    try:
+        settings = get_settings()
+    except ValidationError as exc:
+        missing_keys = []
+        for err in exc.errors():
+            if err.get("type") == "missing":
+                loc = err.get("loc", ())
+                if loc:
+                    missing_keys.append(str(loc[-1]))
+
+        if missing_keys:
+            keys = ", ".join(sorted(set(missing_keys)))
+            raise SystemExit(
+                "Missing required environment variables: "
+                f"{keys}. Set these in your host panel/environment (or a .env file). "
+                "DISCORD_TOKEN can also be provided as BOT_TOKEN or TOKEN."
+            ) from exc
+        raise
+
     configure_logging(settings.bot_log_level)
     bot = ArkpgBot()
     async with bot:
