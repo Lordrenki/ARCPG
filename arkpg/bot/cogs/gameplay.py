@@ -37,7 +37,7 @@ class GameplayCog(commands.Cog):
 
 
 
-    @app_commands.command(description="Initialize your operator profile and open the quick-start guide.")
+    @app_commands.command(description="Initialize your raider profile and open the quick-start guide.")
     async def start(self, interaction: discord.Interaction) -> None:
         async with SessionLocal() as session:
             existing = (await session.execute(select(User).where(User.discord_id == interaction.user.id))).scalar_one_or_none()
@@ -49,8 +49,8 @@ class GameplayCog(commands.Cog):
         pages: list[discord.Embed] = []
 
         page1 = discord.Embed(title="Welcome to ARCPG", color=0x5865F2)
-        page1.description = "Your operator record is now initialized."
-        page1.add_field(name="Status", value="Existing operator detected." if existing else "New operator created.", inline=False)
+        page1.description = "Your raider record is now initialized."
+        page1.add_field(name="Status", value="Existing raider detected." if existing else "New raider created.", inline=False)
         page1.add_field(name="Callsign", value=profile["callsign"], inline=False)
         page1.add_field(name="Next", value="Use the **Next** button for a quick tour.", inline=False)
         page1.set_footer(text="Page 1/3")
@@ -66,7 +66,7 @@ class GameplayCog(commands.Cog):
 
         page3 = discord.Embed(title="Profile & Social", color=0x9B59B6)
         page3.description = "Customize identity and progress with other players."
-        page3.add_field(name="Profile", value="Use **/profile** and **/profile_set** to edit callsign, tagline, and bio.", inline=False)
+        page3.add_field(name="Profile", value="Use **/profile** and **/profile_set** to edit callsign and bio.", inline=False)
         page3.add_field(name="Progression", value="Use **/titles_list**, **/titles_inspect**, and **/title_equip**.", inline=False)
         page3.add_field(name="Multiplayer", value="Try **/squad_create**, **/squad_join**, and **/trade**.", inline=False)
         page3.set_footer(text="Page 3/3")
@@ -138,26 +138,26 @@ class GameplayCog(commands.Cog):
             user = await get_or_create_user(session, interaction.user.id)
             profile = normalized_profile(user)
             title = (await session.get(Title, user.equipped_title_id)).name if user.equipped_title_id else "Unassigned"
-        embed = discord.Embed(title="Operator Profile", color=0x9B59B6)
-        embed.add_field(name="Callsign", value=profile["callsign"], inline=False)
-        embed.add_field(name="Equipped Title", value=title, inline=False)
-        embed.add_field(name="Tagline", value=profile["title"], inline=False)
-        embed.add_field(name="Custom Tagline", value=profile["title"], inline=False)
-        embed.add_field(name="Bio", value=profile["bio"], inline=False)
-        embed.add_field(name="Stats", value=f"Combat {user.stats.get('combat',10)} • Tech {user.stats.get('tech',10)} • Luck {user.stats.get('luck',10)}", inline=False)
-        embed.set_footer(text=f"Level {user.level} • Scraps {user.credits}")
+        combat = user.stats.get("combat", 10)
+        tech = user.stats.get("tech", 10)
+        luck = user.stats.get("luck", 10)
+        embed = discord.Embed(title="⚔️ Raider Dossier", color=0x7A1F2B)
+        embed.description = f"**{profile['callsign']}**\n{title}"
+        embed.add_field(name="📊 Attributes", value=f"⚔️ Combat `{combat}` • 🛠️ Tech `{tech}` • 🍀 Luck `{luck}`", inline=False)
+        embed.add_field(name="🧭 Progress", value=f"Level `{user.level}` • Scraps `{user.credits}`", inline=False)
+        embed.add_field(name="📝 Bio", value=profile["bio"], inline=False)
+        embed.set_footer(text="ARCPG Raider Profile")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Update your profile fields.")
-    async def profile_set(self, interaction: discord.Interaction, callsign: str | None = None, title: str | None = None, bio: str | None = None) -> None:
-        if callsign is None and title is None and bio is None:
+    async def profile_set(self, interaction: discord.Interaction, callsign: str | None = None, bio: str | None = None) -> None:
+        if callsign is None and bio is None:
             await interaction.response.send_message("Provide at least one field to update.", ephemeral=True)
             return
         async with SessionLocal() as session:
-            _, profile = await update_user_profile(session, interaction.user.id, callsign=callsign, title=title, bio=bio)
-        embed = discord.Embed(title="Profile Updated", color=0x2ECC71)
+            _, profile = await update_user_profile(session, interaction.user.id, callsign=callsign, bio=bio)
+        embed = discord.Embed(title="Raider Profile Updated", color=0x2ECC71)
         embed.add_field(name="Callsign", value=profile["callsign"], inline=False)
-        embed.add_field(name="Custom Tagline", value=profile["title"], inline=False)
         embed.add_field(name="Bio", value=profile["bio"], inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

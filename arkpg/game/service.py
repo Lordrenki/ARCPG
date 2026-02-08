@@ -127,8 +127,7 @@ async def atomic_trade_confirm(session: AsyncSession, trade_id: int) -> Trade:
 
 def default_profile(discord_id: int) -> dict[str, str]:
     return {
-        "callsign": f"Operator-{str(discord_id)[-4:]}",
-        "title": "Rookie Scavenger",
+        "callsign": f"Raider-{str(discord_id)[-4:]}",
         "bio": "No bio set yet.",
     }
 
@@ -137,7 +136,6 @@ def normalized_profile(user: User) -> dict[str, str]:
     profile_data = user.stats.get("profile", {}) if isinstance(user.stats, dict) else {}
     profile = default_profile(user.discord_id)
     profile["callsign"] = str(profile_data.get("callsign", profile["callsign"]))[:32]
-    profile["title"] = str(profile_data.get("title", profile["title"]))[:60]
     profile["bio"] = str(profile_data.get("bio", profile["bio"]))[:220]
     return profile
 
@@ -146,7 +144,6 @@ async def update_user_profile(
     session: AsyncSession,
     discord_id: int,
     callsign: str | None = None,
-    title: str | None = None,
     bio: str | None = None,
 ) -> tuple[User, dict[str, str]]:
     user = await get_or_create_user(session, discord_id)
@@ -154,12 +151,10 @@ async def update_user_profile(
 
     if callsign is not None:
         profile["callsign"] = callsign.strip()[:32] or profile["callsign"]
-    if title is not None:
-        profile["title"] = title.strip()[:60] or profile["title"]
     if bio is not None:
         profile["bio"] = bio.strip()[:220] or profile["bio"]
 
-    stats = user.stats
+    stats = dict(user.stats) if isinstance(user.stats, dict) else {}
     stats["profile"] = profile
     user.stats = stats
     await session.commit()
