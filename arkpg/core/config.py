@@ -3,7 +3,7 @@ from pathlib import Path
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy.engine import URL
+from sqlalchemy.engine import URL, make_url
 
 
 class Settings(BaseSettings):
@@ -75,6 +75,17 @@ class Settings(BaseSettings):
             cleaned = cleaned[:-1].strip()
         return cleaned
 
+    @staticmethod
+    def _strip_edge_quotes(value: str | None) -> str | None:
+        if not isinstance(value, str):
+            return value
+        cleaned = value.strip()
+        while cleaned and cleaned[0] in {"'", '"'}:
+            cleaned = cleaned[1:].strip()
+        while cleaned and cleaned[-1] in {"'", '"'}:
+            cleaned = cleaned[:-1].strip()
+        return cleaned
+
     @model_validator(mode="after")
     def validate_database_settings(self) -> "Settings":
         has_url = bool(self.database_url)
@@ -99,7 +110,16 @@ class Settings(BaseSettings):
                 port=self.database_port,
                 database=self.database_name,
             ).render_as_string(hide_password=False)
-        return self.database_url or ""
+        if not self.database_url:
+            return ""
+        parsed_url = make_url(self.database_url)
+        sanitized_url = parsed_url.set(
+            username=self._strip_edge_quotes(parsed_url.username),
+            password=self._strip_edge_quotes(parsed_url.password),
+            host=self._strip_edge_quotes(parsed_url.host),
+            database=self._strip_edge_quotes(parsed_url.database),
+        )
+        return sanitized_url.render_as_string(hide_password=False)
 
 
 @lru_cache(maxsize=1)

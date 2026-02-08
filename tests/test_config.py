@@ -83,3 +83,20 @@ def test_resolved_database_url_strips_unbalanced_quotes_from_db_values() -> None
     )
 
     assert settings.resolved_database_url == "mysql+aiomysql://u552592_JveQ8r1j7d:secret@us.mysql.db.bot-hosting.net:3306/u552592_JveQ8r1j7d"
+
+
+def test_resolved_database_url_strips_quotes_when_using_database_url_only() -> None:
+    settings = Settings(
+        DISCORD_TOKEN="token",
+        DATABASE_URL="mysql+aiomysql://u552592_JveQ8r1j7d':secret@us.mysql.db.bot-hosting.net:3306/u552592_JveQ8r1j7d'",
+        DB_HOST=None,
+        DB_PORT=None,
+        DB_NAME=None,
+        DB_USER=None,
+        DB_PASSWORD=None,
+    )
+
+    assert (
+        settings.resolved_database_url
+        == "mysql+aiomysql://u552592_JveQ8r1j7d:secret@us.mysql.db.bot-hosting.net:3306/u552592_JveQ8r1j7d"
+    )
