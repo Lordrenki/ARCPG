@@ -69,8 +69,10 @@ class Settings(BaseSettings):
         if not isinstance(value, str):
             return value
         cleaned = value.strip()
-        if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {"'", '"'}:
-            cleaned = cleaned[1:-1].strip()
+        while cleaned and cleaned[0] in {"'", '"'}:
+            cleaned = cleaned[1:].strip()
+        while cleaned and cleaned[-1] in {"'", '"'}:
+            cleaned = cleaned[:-1].strip()
         return cleaned
 
     @model_validator(mode="after")

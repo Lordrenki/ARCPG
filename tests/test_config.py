@@ -34,6 +34,11 @@ def test_database_settings_validation_accepts_database_url_only() -> None:
     settings = Settings(
         DISCORD_TOKEN="token",
         DATABASE_URL="mysql+aiomysql://u:p@host:3306/db",
+        DB_HOST=None,
+        DB_PORT=None,
+        DB_NAME=None,
+        DB_USER=None,
+        DB_PASSWORD=None,
     )
 
     assert settings.resolved_database_url == "mysql+aiomysql://u:p@host:3306/db"
@@ -65,3 +70,16 @@ def test_resolved_database_url_strips_wrapping_quotes_from_db_values() -> None:
     )
 
     assert settings.resolved_database_url == "mysql+aiomysql://botuser:secret@us.mysql.db.bot-hosting.net:3306/game"
+
+
+def test_resolved_database_url_strips_unbalanced_quotes_from_db_values() -> None:
+    settings = Settings(
+        DISCORD_TOKEN="token",
+        DB_HOST="us.mysql.db.bot-hosting.net",
+        DB_PORT=3306,
+        DB_NAME="u552592_JveQ8r1j7d'",
+        DB_USER="u552592_JveQ8r1j7d'",
+        DB_PASSWORD="secret",
+    )
+
+    assert settings.resolved_database_url == "mysql+aiomysql://u552592_JveQ8r1j7d:secret@us.mysql.db.bot-hosting.net:3306/u552592_JveQ8r1j7d"
