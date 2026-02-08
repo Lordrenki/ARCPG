@@ -7,12 +7,22 @@ from pathlib import Path
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from arkpg.bot.client import ArkpgBot
 from arkpg.core.config import get_settings
 from arkpg.core.logging import configure_logging
 
 
 async def main() -> None:
+    try:
+        from arkpg.bot.client import ArkpgBot
+    except ModuleNotFoundError as exc:
+        if exc.name == "discord":
+            raise SystemExit(
+                "Missing dependency: discord.py is not installed. "
+                "Install dependencies with `pip install -r requirements.txt` "
+                "or configure your host REQUIREMENTS_FILE to requirements.txt."
+            ) from exc
+        raise
+
     settings = get_settings()
     configure_logging(settings.bot_log_level)
     bot = ArkpgBot()
