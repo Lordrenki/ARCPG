@@ -8,7 +8,15 @@ from arkpg.core.config import get_settings
 from arkpg.db.models import Deployment, DeploymentStatus, Inventory, Item, Squad, SquadMember, Trade, TradeStatus, User
 from arkpg.db.session import SessionLocal
 from arkpg.game.constants import RARITY_COLORS, ZONE_CONFIG
-from arkpg.game.service import atomic_trade_confirm, claim_idle, extract_deployment, get_or_create_user, start_deployment
+from arkpg.game.service import (
+    atomic_trade_confirm,
+    claim_idle,
+    extract_deployment,
+    get_or_create_user,
+    normalized_profile,
+    start_deployment,
+    update_user_profile,
+)
 
 
 class GameplayCog(commands.Cog):
@@ -158,12 +166,46 @@ class GameplayCog(commands.Cog):
                 return
         await interaction.response.send_message(f"Trade #{trade_id} confirmed.", ephemeral=True)
 
+
+
+    @app_commands.command(description="View your customizable profile.")
+    async def profile(self, interaction: discord.Interaction) -> None:
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, interaction.user.id)
+            profile = normalized_profile(user)
+        embed = discord.Embed(title="Operator Profile", color=0x9B59B6)
+        embed.add_field(name="Callsign", value=profile["callsign"], inline=False)
+        embed.add_field(name="Title", value=profile["title"], inline=False)
+        embed.add_field(name="Bio", value=profile["bio"], inline=False)
+        embed.set_footer(text=f"Level {user.level} • Credits {user.credits}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(description="Update your customizable profile fields.")
+    @app_commands.describe(callsign="Up to 32 chars", title="Up to 60 chars", bio="Up to 220 chars")
+    async def profile_set(
+        self,
+        interaction: discord.Interaction,
+        callsign: str | None = None,
+        title: str | None = None,
+        bio: str | None = None,
+    ) -> None:
+        if callsign is None and title is None and bio is None:
+            await interaction.response.send_message("Provide at least one field to update.", ephemeral=True)
+            return
+        async with SessionLocal() as session:
+            _, profile = await update_user_profile(session, interaction.user.id, callsign=callsign, title=title, bio=bio)
+        embed = discord.Embed(title="Profile Updated", color=0x2ECC71)
+        embed.add_field(name="Callsign", value=profile["callsign"], inline=False)
+        embed.add_field(name="Title", value=profile["title"], inline=False)
+        embed.add_field(name="Bio", value=profile["bio"], inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     @app_commands.command(description="Leaderboard for level, credits, clears, and legendary finds.")
     async def leaderboard(self, interaction: discord.Interaction) -> None:
         async with SessionLocal() as session:
             top = (await session.execute(select(User).order_by(User.level.desc(), User.xp.desc()).limit(10))).scalars().all()
             legend = sorted(top, key=lambda u: int(u.stats.get("legendary_finds", 0)), reverse=True)
-        embed = discord.Embed(title="ARKPG Leaderboard", color=0xF1C40F)
+        embed = discord.Embed(title="ARCPG Leaderboard", color=0xF1C40F)
         embed.add_field(name="Top Operators", value="\n".join(f"{i+1}. <@{u.discord_id}> — Lv {u.level}" for i, u in enumerate(top)) or "None", inline=False)
         embed.add_field(name="Legendary Finds", value="\n".join(f"{i+1}. <@{u.discord_id}> — {u.stats.get('legendary_finds', 0)}" for i, u in enumerate(legend)) or "None", inline=False)
         await interaction.response.send_message(embed=embed)
