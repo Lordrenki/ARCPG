@@ -51,7 +51,7 @@ tests/
 - 40+ gameplay-earned titles across Raider, Crafter, Trader, Expedition, Squad, PvP, Collector, Events.
 - Hidden-title support (10+ hidden) and inspectable progress via rule functions.
 - `/titles_list`, `/titles_inspect`, `/title_equip`.
-- Profile now shows equipped title + editable tagline.
+- Profile now shows equipped title plus editable callsign and bio.
 
 ### B) Expedition Project System
 - Multi-stage seasonal expedition with donation-based progression.
