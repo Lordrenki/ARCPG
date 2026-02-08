@@ -1,11 +1,20 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # Some hosts start the bot from a parent directory (e.g. `/home/container`)
+    # while the project lives in a subfolder (e.g. `/home/container/ARCPG-main`).
+    # Read `.env` from both locations so local and hosted starts work reliably.
+    _project_root = Path(__file__).resolve().parents[2]
+    model_config = SettingsConfigDict(
+        env_file=(str(_project_root / ".env"), ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     discord_token: str = Field(validation_alias=AliasChoices("DISCORD_TOKEN", "BOT_TOKEN", "TOKEN"))
     database_url: str = Field(alias="DATABASE_URL")
