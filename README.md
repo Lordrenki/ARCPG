@@ -107,7 +107,7 @@ tests/
 At startup, ARCPG requires these variables to exist in the host panel/environment (or in `.env`):
 
 - `DISCORD_TOKEN` (or `BOT_TOKEN` / `TOKEN`)
-- `DATABASE_URL`
+- `DATABASE_URL` **or** all of: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
 - `REDIS_URL`
 
 If any are missing, startup now exits early with a clear message listing exactly which variables are missing.
@@ -148,6 +148,22 @@ DATABASE_URL=mysql+aiomysql://DB_USER:DB_PASSWORD@us.mysql.db.bot-hosting.net:33
 ```
 
 `REDIS_URL` is optional in this project and defaults to `redis://localhost:6379/0`.
+
+
+### Alternate DB config (avoids URL-encoding mistakes)
+
+If your MySQL password contains special characters and `DATABASE_URL` is error-prone, you can set
+individual DB vars instead. ARCPG will build a safe SQLAlchemy URL for you:
+
+```env
+DB_HOST=us.mysql.db.bot-hosting.net
+DB_PORT=3306
+DB_NAME=your_database
+DB_USER=your_user
+DB_PASSWORD=your_raw_password
+```
+
+If both `DATABASE_URL` and `DB_*` values are set, `DB_*` takes precedence.
 
 ## Notes
 
