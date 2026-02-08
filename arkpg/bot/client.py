@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 
 from arkpg.core.config import get_settings
+from arkpg.db.session import ensure_schema
 
 
 class ArkpgBot(commands.Bot):
@@ -12,6 +13,7 @@ class ArkpgBot(commands.Bot):
         self.settings = get_settings()
 
     async def setup_hook(self) -> None:
+        await ensure_schema()
         await self.load_extension("arkpg.bot.cogs.gameplay")
         await self.load_extension("arkpg.bot.cogs.admin")
         if self.settings.sync_commands_guild_id:
