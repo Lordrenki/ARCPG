@@ -34,7 +34,7 @@ from arkpg.db.models import (
 )
 from arkpg.db.session import SessionLocal
 from arkpg.game.constants import RARITY_COLORS, ZONE_CONFIG
-from arkpg.game.profile_backgrounds import PROFILE_BACKGROUNDS, get_background
+from arkpg.game.profile_backgrounds import PROFILE_BACKGROUNDS, get_background, save_custom_background
 from arkpg.game.progression import ActivityService, EventBus, ExpeditionService, QuestService, SeederService, TitleService
 from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
 from arkpg.game.economy import level_from_xp
@@ -59,6 +59,128 @@ ADMIN_ROLE_ID = 927355923364720651
 ADMIN_GUILD_ID = 927355923314380901
 ADMIN_PROFILE_BACKGROUND_PATH = Path(__file__).resolve().parents[2] / "assets" / "admin_staff_team.png"
 DUEL_COOLDOWN_SECONDS = 300
+
+
+def _trade_summary(trade: Trade) -> str:
+    offered = trade.offered or {}
+    requested = trade.requested or {}
+    offered_bits = [f"{int(offered.get('credits', 0) or 0)} credits"]
+    requested_bits = [f"{int(requested.get('credits', 0) or 0)} credits"]
+    if offered.get("item_id") and int(offered.get("item_qty", 0) or 0) > 0:
+        offered_bits.append(f"item #{int(offered['item_id'])} x{int(offered['item_qty'])}")
+    if requested.get("item_id") and int(requested.get("item_qty", 0) or 0) > 0:
+        requested_bits.append(f"item #{int(requested['item_id'])} x{int(requested['item_qty'])}")
+    return f"Offer: {', '.join(offered_bits)}\nRequest: {', '.join(requested_bits)}"
+
+
+class _TradeAmountModal(discord.ui.Modal, title="Add Trade Credits"):
+    credits = discord.ui.TextInput(label="Credits to add", placeholder="0", max_length=10)
+
+    def __init__(self, trade_id: int, owner_id: int):
+        super().__init__()
+        self.trade_id = trade_id
+        self.owner_id = owner_id
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Only the trade target can edit this trade.", ephemeral=True)
+            return
+        try:
+            delta = int(str(self.credits.value).strip())
+        except ValueError:
+            await interaction.response.send_message("Credits must be a whole number.", ephemeral=True)
+            return
+        if delta <= 0:
+            await interaction.response.send_message("Credits must be greater than zero.", ephemeral=True)
+            return
+        async with SessionLocal() as session:
+            trade = await session.get(Trade, self.trade_id)
+            if trade is None or trade.status != TradeStatus.PENDING:
+                await interaction.response.send_message("Trade is no longer pending.", ephemeral=True)
+                return
+            requested = dict(trade.requested or {})
+            requested["credits"] = int(requested.get("credits", 0) or 0) + delta
+            trade.requested = requested
+            await session.commit()
+        await interaction.response.edit_message(content=f"Trade #{self.trade_id} updated.\n{_trade_summary(trade)}")
+
+
+class _TradeItemModal(discord.ui.Modal, title="Add Trade Item Request"):
+    item_id = discord.ui.TextInput(label="Item ID", placeholder="12345", max_length=12)
+    qty = discord.ui.TextInput(label="Quantity", placeholder="1", max_length=8)
+
+    def __init__(self, trade_id: int, owner_id: int):
+        super().__init__()
+        self.trade_id = trade_id
+        self.owner_id = owner_id
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Only the trade target can edit this trade.", ephemeral=True)
+            return
+        try:
+            item_id = int(str(self.item_id.value).strip())
+            qty = int(str(self.qty.value).strip())
+        except ValueError:
+            await interaction.response.send_message("Item ID and quantity must be whole numbers.", ephemeral=True)
+            return
+        if item_id <= 0 or qty <= 0:
+            await interaction.response.send_message("Item ID and quantity must be greater than zero.", ephemeral=True)
+            return
+        async with SessionLocal() as session:
+            trade = await session.get(Trade, self.trade_id)
+            if trade is None or trade.status != TradeStatus.PENDING:
+                await interaction.response.send_message("Trade is no longer pending.", ephemeral=True)
+                return
+            requested = dict(trade.requested or {})
+            requested["item_id"] = item_id
+            requested["item_qty"] = qty
+            trade.requested = requested
+            await session.commit()
+        await interaction.response.edit_message(content=f"Trade #{self.trade_id} updated.\n{_trade_summary(trade)}")
+
+
+class TradeOfferView(discord.ui.View):
+    def __init__(self, trade_id: int, sender_discord_id: int, target_discord_id: int, timeout: float = 900):
+        super().__init__(timeout=timeout)
+        self.trade_id = trade_id
+        self.sender_discord_id = sender_discord_id
+        self.target_discord_id = target_discord_id
+
+    @discord.ui.button(label="Add Money", style=discord.ButtonStyle.secondary)
+    async def add_money(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interaction.response.send_modal(_TradeAmountModal(trade_id=self.trade_id, owner_id=self.target_discord_id))
+
+    @discord.ui.button(label="Add Item", style=discord.ButtonStyle.secondary)
+    async def add_item(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await interaction.response.send_modal(_TradeItemModal(trade_id=self.trade_id, owner_id=self.target_discord_id))
+
+    @discord.ui.button(label="Accept", style=discord.ButtonStyle.success)
+    async def accept(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if interaction.user.id != self.target_discord_id:
+            await interaction.response.send_message("Only the trade target can accept this trade.", ephemeral=True)
+            return
+        async with SessionLocal() as session:
+            try:
+                await atomic_trade_confirm(session, self.trade_id)
+            except ValueError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
+        await interaction.response.edit_message(content=f"Trade #{self.trade_id} confirmed.", view=None)
+
+    @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger)
+    async def deny(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if interaction.user.id != self.target_discord_id:
+            await interaction.response.send_message("Only the trade target can deny this trade.", ephemeral=True)
+            return
+        async with SessionLocal() as session:
+            trade = await session.get(Trade, self.trade_id)
+            if trade is None or trade.status != TradeStatus.PENDING:
+                await interaction.response.send_message("Trade is no longer pending.", ephemeral=True)
+                return
+            trade.status = TradeStatus.CANCELLED
+            await session.commit()
+        await interaction.response.edit_message(content=f"Trade #{self.trade_id} denied.", view=None)
 
 
 class GameplayCog(commands.Cog):
@@ -522,6 +644,43 @@ class GameplayCog(commands.Cog):
         embed.add_field(name="Total Collected", value=str(len(profile["collected_background_ids"])), inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+
+    @app_commands.command(description="Admin: add a custom profile background image.")
+    async def background_add_custom(
+        self,
+        interaction: discord.Interaction,
+        background_id: str,
+        name: str,
+        image: discord.Attachment,
+    ) -> None:
+        if not self._is_super_admin(interaction):
+            await interaction.response.send_message("This admin command is restricted.", ephemeral=True)
+            return
+
+        normalized_id = background_id.strip().lower()
+        if not normalized_id:
+            await interaction.response.send_message("Provide a valid background id.", ephemeral=True)
+            return
+        ext = Path(image.filename or "").suffix.lower()
+        if ext not in {".png", ".jpg", ".jpeg", ".webp"}:
+            await interaction.response.send_message("Upload a PNG, JPG, JPEG, or WEBP image.", ephemeral=True)
+            return
+
+        target_dir = Path(__file__).resolve().parents[2] / "assets" / "profile_backgrounds" / "custom"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        local_path = target_dir / f"{normalized_id}{ext}"
+
+        await image.save(local_path)
+        save_custom_background(normalized_id, name.strip(), str(local_path))
+        async with SessionLocal() as session:
+            await collect_profile_background(session, interaction.user.id, normalized_id)
+
+        embed = self._styled_embed(title="Custom Background Added")
+        embed.add_field(name="ID", value=normalized_id, inline=False)
+        embed.add_field(name="Name", value=name.strip(), inline=False)
+        embed.set_image(url=image.url)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     @app_commands.command(description="List titles.")
     async def titles_list(self, interaction: discord.Interaction, filter: str = "earned") -> None:
         async with SessionLocal() as session:
@@ -949,6 +1108,9 @@ class GameplayCog(commands.Cog):
         if opponent.bot:
             await interaction.response.send_message("Bots cannot duel.", ephemeral=True)
             return
+        if opponent.id == interaction.user.id:
+            await interaction.response.send_message("You cannot duel yourself.", ephemeral=True)
+            return
         async with SessionLocal() as session:
             me = await get_or_create_user(session, interaction.user.id)
             if self._is_down(me):
@@ -985,7 +1147,7 @@ class GameplayCog(commands.Cog):
 
             if i_win:
                 await EventBus.emit(session, me, "PVP_WIN", {"counter_updates": {"pvp_wins": 1, "pvp_fair_wins": 1}})
-            xp_reward = random.randint(28, 48)
+            xp_reward = random.randint(14, 26)
             credit_reward = random.randint(90, 170)
             winner_user.xp += xp_reward
             winner_user.credits += credit_reward
@@ -1007,8 +1169,8 @@ class GameplayCog(commands.Cog):
         flavor_pool = [
             f"{winner_member.mention} baited a reload and landed the finishing burst on {loser_member.mention}.",
             f"{loser_member.mention} had the early advantage, but {winner_member.mention} turned it around with better positioning.",
-            f"A chaos grenade broke the tempo and {winner_member.mention} capitalized first.",
-            f"After a long standoff, {winner_member.mention} committed to the push and won the duel.",
+            f"A chaos grenade broke the tempo and {winner_member.mention} capitalized first against {loser_member.mention}.",
+            f"After a long standoff, {winner_member.mention} committed to the push and won the duel over {loser_member.mention}.",
             f"Both raiders traded heavy hits, but {winner_member.mention} survived the final exchange.",
             f"The arena lights flickered and {winner_member.mention} used the opening to outplay {loser_member.mention}.",
         ]
@@ -1016,7 +1178,8 @@ class GameplayCog(commands.Cog):
         flavor = random.choice(flavor_pool) + (" **Upset win!**" if upset else "")
         await interaction.response.send_message(
             f"{flavor}\n"
-            f"Power check: **{my_power:.1f}** vs **{their_power:.1f}** (variance applied).\n"
+            f"Duel: {interaction.user.mention} vs {opponent.mention}.\n"
+            f"Power check: **{my_power:.1f}** vs **{their_power:.1f}**.\n"
             f"Winner reward: **+{xp_reward} XP**, **+{credit_reward} credits**. "
             f"Loser penalty: **-{hp_penalty} HP**."
         )
@@ -1061,10 +1224,22 @@ class GameplayCog(commands.Cog):
         async with SessionLocal() as session:
             src = await get_or_create_user(session, interaction.user.id)
             dst = await get_or_create_user(session, target.id)
+            existing_pending = (
+                await session.execute(select(Trade).where(Trade.status == TradeStatus.PENDING))
+            ).scalar_one_or_none()
+            if existing_pending is not None:
+                await interaction.response.send_message("Only one pending trade is allowed at a time.", ephemeral=True)
+                return
             trade_row = Trade(from_user=src.id, to_user=dst.id, offered=offered, requested=requested, status=TradeStatus.PENDING)
             session.add(trade_row)
             await session.commit()
-        await interaction.response.send_message(f"Trade #{trade_row.id} offered to {target.mention}.", ephemeral=True)
+        view = TradeOfferView(trade_id=trade_row.id, sender_discord_id=interaction.user.id, target_discord_id=target.id)
+        await interaction.response.send_message(f"Trade #{trade_row.id} sent to {target.mention}.", ephemeral=True)
+        await interaction.channel.send(
+            f"Trade #{trade_row.id} started by {interaction.user.mention} for {target.mention}.\n{_trade_summary(trade_row)}",
+            view=view,
+            allowed_mentions=discord.AllowedMentions(users=True),
+        )
 
     @app_commands.command(description="Confirm a trade by ID.")
     async def trade_confirm(self, interaction: discord.Interaction, trade_id: int) -> None:
@@ -1074,8 +1249,8 @@ class GameplayCog(commands.Cog):
                 await interaction.response.send_message("Trade not found.", ephemeral=True)
                 return
             actor = await get_or_create_user(session, interaction.user.id)
-            if actor.id not in (trade.from_user, trade.to_user):
-                await interaction.response.send_message("You're not a participant in this trade.", ephemeral=True)
+            if actor.id != trade.to_user:
+                await interaction.response.send_message("Only the trade target can confirm this trade.", ephemeral=True)
                 return
             try:
                 await atomic_trade_confirm(session, trade_id)
@@ -1084,6 +1259,24 @@ class GameplayCog(commands.Cog):
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
         await interaction.response.send_message(f"Trade #{trade_id} confirmed.", ephemeral=True)
+
+    @app_commands.command(description="Cancel your currently pending outgoing trade.")
+    async def canceltrade(self, interaction: discord.Interaction) -> None:
+        async with SessionLocal() as session:
+            actor = await get_or_create_user(session, interaction.user.id)
+            trade = (
+                await session.execute(
+                    select(Trade).where(
+                        and_(Trade.from_user == actor.id, Trade.status == TradeStatus.PENDING)
+                    )
+                )
+            ).scalar_one_or_none()
+            if trade is None:
+                await interaction.response.send_message("You have no pending outgoing trade to cancel.", ephemeral=True)
+                return
+            trade.status = TradeStatus.CANCELLED
+            await session.commit()
+        await interaction.response.send_message(f"Trade #{trade.id} cancelled.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:

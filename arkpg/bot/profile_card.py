@@ -21,6 +21,11 @@ def _xp_progress(user_xp: int, level: int) -> tuple[int, int, float]:
 
 
 def _build_background(bg: ProfileBackground) -> Image.Image:
+    if bg.image_path:
+        try:
+            return Image.open(bg.image_path).convert("RGB").resize((CARD_SIZE, CARD_SIZE))
+        except OSError:
+            pass
     image = Image.new("RGB", (CARD_SIZE, CARD_SIZE), bg.top_color)
     draw = ImageDraw.Draw(image)
     for y in range(CARD_SIZE):
