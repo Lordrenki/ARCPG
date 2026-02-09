@@ -106,6 +106,44 @@ class GameplayCog(commands.Cog):
             return " + ".join(self._format_requirement(sub, {}) for sub in req.get("all", []))
         return f"Progress: {current}/{target}"
 
+    @staticmethod
+    def _flatten_commands(cmds: list[app_commands.Command | app_commands.Group]) -> list[app_commands.Command]:
+        flat: list[app_commands.Command] = []
+        for cmd in cmds:
+            if isinstance(cmd, app_commands.Group):
+                flat.extend(GameplayCog._flatten_commands(cmd.commands))
+            else:
+                flat.append(cmd)
+        return flat
+
+    @app_commands.command(description="Browse all player commands.")
+    async def help(self, interaction: discord.Interaction) -> None:
+        tree_commands = interaction.client.tree.get_commands()
+        commands_list = [
+            cmd
+            for cmd in self._flatten_commands(tree_commands)
+            if not cmd.name.startswith("admin")
+        ]
+        entries = sorted(
+            [(f"/{cmd.qualified_name}", cmd.description or "No description available.") for cmd in commands_list],
+            key=lambda x: x[0],
+        )
+
+        per_page = 10
+        pages: list[discord.Embed] = []
+        for idx in range(0, len(entries), per_page):
+            chunk = entries[idx : idx + per_page]
+            embed = self._styled_embed(title="ARCPG Command Guide")
+            embed.description = "\n".join(f"`{name}` — {description}" for name, description in chunk)
+            embed.set_footer(text=f"ARCPG Alpha V.0.5 • Page {idx // per_page + 1}/{max(1, (len(entries) + per_page - 1) // per_page)}")
+            pages.append(embed)
+
+        if not pages:
+            pages.append(self._styled_embed(title="ARCPG Command Guide", description="No commands available."))
+
+        view = PaginatedEmbedView(owner_id=interaction.user.id, pages=pages)
+        await interaction.response.send_message(embed=view.current_embed(), view=view)
+
     @app_commands.command(description="Initialize your raider profile and open the quick-start guide.")
     async def start(self, interaction: discord.Interaction) -> None:
         async with SessionLocal() as session:
@@ -192,9 +230,9 @@ class GameplayCog(commands.Cog):
                     user = await get_or_create_user(session, interaction.user.id)
                     active_dep = (await session.execute(select(Deployment).where(and_(Deployment.user_id == user.id, Deployment.status.in_([DeploymentStatus.ACTIVE, DeploymentStatus.READY_TO_EXTRACT]))).order_by(Deployment.started_at.desc()))).scalar_one_or_none()
                     if active_dep:
-                        await interaction.response.send_message(f"Deployment is still running. You can extract {self._relative_time(active_dep.ends_at)}.", ephemeral=True)
+                        await interaction.response.send_message(f"Deployment is still running. You can extract {self._relative_time(active_dep.ends_at)}.")
                         return
-                await interaction.response.send_message(str(exc), ephemeral=True)
+                await interaction.response.send_message(str(exc))
                 return
         color = RARITY_COLORS.get(outcome["loot"][0]["rarity"], 0x95A5A6) if outcome["loot"] else 0x95A5A6
         embed = self._styled_embed(title=f"Extraction: {outcome['status'].title()}", color=color)
@@ -206,7 +244,7 @@ class GameplayCog(commands.Cog):
         survivability = outcome.get("survivability") or {}
         if survivability:
             embed.add_field(name="Damage", value=f"Taken {survivability.get('effective_damage', 0)} • HP {survivability.get('health_after', '?')}" + (" • Auto-heal used" if survivability.get("healing_used") else ""), inline=False)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed)
 
     @app_commands.command(description="View your inventory.")
     async def inventory(self, interaction: discord.Interaction) -> None:
@@ -295,7 +333,7 @@ class GameplayCog(commands.Cog):
             admin_background_path=str(ADMIN_PROFILE_BACKGROUND_PATH) if is_admin else None,
         )
         file = discord.File(card, filename="profile-card.png")
-        await interaction.response.send_message(file=file, ephemeral=True)
+        await interaction.response.send_message(file=file)
 
     @app_commands.command(description="Update your profile fields.")
     async def profile_set(self, interaction: discord.Interaction, callsign: str | None = None, bio: str | None = None) -> None:
@@ -577,9 +615,9 @@ class GameplayCog(commands.Cog):
                 await EventBus.emit(session, user, "SCAVENGE_COMPLETED", {"counter_updates": {"scavenge_runs": 1, "activity_credits_earned": result.credits}})
                 await session.commit()
             except ValueError as exc:
-                await interaction.response.send_message(str(exc), ephemeral=True)
+                await interaction.response.send_message(str(exc))
                 return
-        await interaction.response.send_message(result.message, ephemeral=True)
+        await interaction.response.send_message(result.message)
 
     @app_commands.command(description="Convert recyclables into scraps/materials.")
     async def salvage(self, interaction: discord.Interaction) -> None:
@@ -594,9 +632,9 @@ class GameplayCog(commands.Cog):
                 await EventBus.emit(session, user, "SALVAGE_COMPLETED", {"counter_updates": update})
                 await session.commit()
             except ValueError as exc:
-                await interaction.response.send_message(str(exc), ephemeral=True)
+                await interaction.response.send_message(str(exc))
                 return
-        await interaction.response.send_message(result.message, ephemeral=True)
+        await interaction.response.send_message(result.message)
 
     @app_commands.command(description="Take a timed courier job with risk/reward.")
     async def courier(self, interaction: discord.Interaction, stake: int) -> None:
@@ -610,9 +648,9 @@ class GameplayCog(commands.Cog):
                 await EventBus.emit(session, user, "COURIER_COMPLETED", {"counter_updates": update})
                 await session.commit()
             except ValueError as exc:
-                await interaction.response.send_message(str(exc), ephemeral=True)
+                await interaction.response.send_message(str(exc))
                 return
-        await interaction.response.send_message(f"{result.message} Net `{result.credits}`", ephemeral=True)
+        await interaction.response.send_message(f"{result.message} Net `{result.credits}`")
 
     @app_commands.command(description="Work a random side job for credits.")
     async def work(self, interaction: discord.Interaction) -> None:
@@ -623,9 +661,9 @@ class GameplayCog(commands.Cog):
                 await EventBus.emit(session, user, "WORK_COMPLETED", {"counter_updates": {"work_runs": 1, "activity_credits_earned": result.credits}})
                 await session.commit()
             except ValueError as exc:
-                await interaction.response.send_message(str(exc), ephemeral=True)
+                await interaction.response.send_message(str(exc))
                 return
-        await interaction.response.send_message(result.message, ephemeral=True)
+        await interaction.response.send_message(result.message)
 
     @app_commands.command(description="Bet credits on a dice roll.")
     async def dice(self, interaction: discord.Interaction, stake: app_commands.Range[int, 10, 100000]) -> None:
@@ -639,9 +677,9 @@ class GameplayCog(commands.Cog):
                 await EventBus.emit(session, user, "GAMBLE_DICE", {"counter_updates": updates})
                 await session.commit()
             except ValueError as exc:
-                await interaction.response.send_message(str(exc), ephemeral=True)
+                await interaction.response.send_message(str(exc))
                 return
-        await interaction.response.send_message(result.message, ephemeral=True)
+        await interaction.response.send_message(result.message)
 
     @app_commands.command(description="Show crafting requirements for an item.")
     async def craft_info(self, interaction: discord.Interaction, item_id: int) -> None:
