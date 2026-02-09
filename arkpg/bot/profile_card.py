@@ -67,7 +67,7 @@ async def render_profile_card(
     ImageDraw.Draw(mask).ellipse((0, 0, 149, 149), fill=255)
     avatar_circle = ImageOps.fit(avatar_image, (150, 150))
     avatar_circle.putalpha(mask)
-    base.paste(avatar_circle, (38, 38), avatar_circle)
+    base.paste(avatar_circle, (38, 56), avatar_circle)
 
     draw = ImageDraw.Draw(base)
     try:
@@ -80,8 +80,8 @@ async def render_profile_card(
         small_font = ImageFont.load_default()
 
     draw.text((38, 32), f"Lv {level}", fill=(255, 255, 255), font=mid_font)
-    draw.text((210, 56), callsign, fill=(245, 245, 245), font=name_font)
-    draw.text((210, 102), f"{title_name}", fill=(205, 205, 205), font=mid_font)
+    draw.text((210, 74), callsign, fill=(245, 245, 245), font=name_font)
+    draw.text((210, 120), f"{title_name}", fill=(205, 205, 205), font=mid_font)
 
     current_xp, needed_xp, progress = _xp_progress(xp, level)
     bar_x, bar_y, bar_w, bar_h = 38, 274, CARD_SIZE - 76, 26
@@ -91,9 +91,9 @@ async def render_profile_card(
     draw.text((bar_x + 12, bar_y + 2), "XP", fill=(255, 255, 255), font=small_font)
     draw.text((bar_x, bar_y + 34), f"{current_xp}/{needed_xp}", fill=(236, 236, 236), font=small_font)
 
-    equipped_box = (470, 260, CARD_SIZE - 38, 362)
+    equipped_box = (470, 292, CARD_SIZE - 38, 418)
     draw.rounded_rectangle(equipped_box, radius=14, fill=(132, 149, 201, 210))
-    draw.text((486, 268), "Equipped", fill=(255, 255, 255), font=small_font)
+    draw.text((486, 300), "Equipment", fill=(255, 255, 255), font=small_font)
     weapon_text = "None"
     if equipped_weapons:
         weapon_text = equipped_weapons[0]
@@ -103,9 +103,9 @@ async def render_profile_card(
         weapon_text = f"{weapon_text[:14]}..."
     gadget_text = equipped_gadget[:12] + ("..." if len(equipped_gadget) > 12 else "")
     healing_text = equipped_healing[:14] + ("..." if len(equipped_healing) > 14 else "")
-    draw.text((486, 296), f"Weapons: {weapon_text}", fill=(255, 255, 255), font=small_font)
-    draw.text((486, 320), f"Gadget: {gadget_text}", fill=(255, 255, 255), font=small_font)
-    draw.text((486, 344), f"Healing: {healing_text}", fill=(255, 255, 255), font=small_font)
+    draw.text((486, 328), f"Weapons: {weapon_text}", fill=(255, 255, 255), font=small_font)
+    draw.text((486, 356), f"Gadget: {gadget_text}", fill=(255, 255, 255), font=small_font)
+    draw.text((486, 384), f"Healing: {healing_text}", fill=(255, 255, 255), font=small_font)
 
     draw.text((38, 354), "⚔", fill=(255, 255, 255), font=mid_font)
     draw.text((74, 356), f"Combat {combat}", fill=(238, 238, 238), font=mid_font)
