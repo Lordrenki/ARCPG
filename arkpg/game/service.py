@@ -307,6 +307,34 @@ async def craft_item(session: AsyncSession, discord_id: int, item_id: int, qty: 
         raise ValueError("This item cannot be crafted.")
 
     recipe = crafting_recipe_for_item(item)
+    crafted_source_id = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
+    if not crafted_source_id:
+        raise ValueError("Crafting is blocked because this item has no source id metadata.")
+
+    required_blueprint_source_id = f"{crafted_source_id}_blueprint"
+    blueprint_item = (
+        await session.execute(
+            select(Item).where(
+                and_(
+                    Item.type == ItemType.BLUEPRINT,
+                    Item.metadata_json["source_id"].as_string() == required_blueprint_source_id,
+                )
+            )
+        )
+    ).scalar_one_or_none()
+    if blueprint_item is None:
+        raise ValueError(f"Crafting is blocked: missing blueprint item '{required_blueprint_source_id}'.")
+
+    owned_blueprint = (
+        await session.execute(
+            select(Inventory).where(
+                and_(Inventory.user_id == user.id, Inventory.item_id == blueprint_item.id, Inventory.weapon_level.is_(None), Inventory.qty > 0)
+            )
+        )
+    ).scalar_one_or_none()
+    if owned_blueprint is None:
+        raise ValueError(f"You need to own **{blueprint_item.name}** before crafting this item.")
+
     source_items = (await session.execute(select(Item))).scalars().all()
     source_map = {str((x.metadata_json or {}).get("source_id") or "").lower(): x for x in source_items}
 
