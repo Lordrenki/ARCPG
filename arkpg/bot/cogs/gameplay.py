@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
+import random
+from typing import Literal
 
 import discord
 from discord import app_commands
@@ -7,7 +9,7 @@ from discord.ext import commands
 from sqlalchemy import and_, select
 
 from arkpg.bot.profile_card import render_profile_card
-from arkpg.bot.views import PaginatedEmbedView
+from arkpg.bot.views import PaginatedEmbedView, ProfileEditorView
 from arkpg.core.config import get_settings
 from arkpg.db.models import (
     Deployment,
@@ -36,6 +38,7 @@ from arkpg.game.profile_backgrounds import PROFILE_BACKGROUNDS, get_background
 from arkpg.game.progression import ActivityService, EventBus, ExpeditionService, QuestService, SeederService, TitleService
 from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
 from arkpg.game.economy import level_from_xp
+from arkpg.game.loadout import HEALING_ITEM_FLAT, SHIELD_DAMAGE_REDUCTION, is_gadget, is_healing, is_shield, is_weapon, source_type
 from arkpg.game.service import (
     atomic_trade_confirm,
     claim_idle,
@@ -117,6 +120,22 @@ class GameplayCog(commands.Cog):
                 flat.append(cmd)
         return flat
 
+    def _combat_rating(self, user: User, loadout: dict) -> float:
+        stats = user.stats or {}
+        weapons = [w for w in (loadout.get("weapons") or []) if w]
+        weapon_power = sum((float(w.get("value", 0)) / 500) + 2.5 for w in weapons)
+        gadget_power = (float((loadout.get("gadget") or {}).get("value", 0)) / 800) if loadout.get("gadget") else 0.0
+        shield_bonus = (float((loadout.get("shield") or {}).get("value", 0)) / 900) if loadout.get("shield") else 0.0
+        return (
+            user.level * 1.35
+            + float(stats.get("combat", 10)) * 1.45
+            + float(stats.get("tech", 10)) * 0.55
+            + float(stats.get("luck", 10)) * 0.9
+            + weapon_power
+            + gadget_power
+            + shield_bonus
+        )
+
     @app_commands.command(description="Browse all player commands.")
     async def help(self, interaction: discord.Interaction) -> None:
         tree_commands = interaction.client.tree.get_commands()
@@ -175,8 +194,8 @@ class GameplayCog(commands.Cog):
 
         page3 = self._styled_embed(title="Profile & Social", color=0x7A1F2B)
         page3.description = "Customize identity and progress with other players."
-        page3.add_field(name="Profile", value="Use **/profile** and **/profile_set** to edit callsign and bio.", inline=False)
-        page3.add_field(name="Progression", value="Use **/titles_list**, **/titles_inspect**, and **/title_equip**.", inline=False)
+        page3.add_field(name="Profile", value="Use **/profile** and **/editprofile** to edit callsign, bio, title, and background.", inline=False)
+        page3.add_field(name="Progression", value="Use **/titles_list** and **/titles_inspect** to track earned title goals.", inline=False)
         page3.add_field(name="Multiplayer", value="Try **/squad_create**, **/squad_join**, and **/trade**.", inline=False)
         page3.set_footer(text="ARCPG Alpha V.0.5 • Page 3/3")
         pages.append(page3)
@@ -274,12 +293,47 @@ class GameplayCog(commands.Cog):
         embed.add_field(name="Shield", value=(shield or {}).get("name", "None equipped"), inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    async def equip_item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[int]]:
+        slot = str(getattr(interaction.namespace, "slot", "weapon")).lower().strip()
+        normalized_slot = "weapon" if slot not in {"weapon", "gadget", "healing", "shield"} else slot
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, interaction.user.id)
+            rows = (await session.execute(
+                select(Inventory, Item)
+                .join(Item, Inventory.item_id == Item.id)
+                .where(Inventory.user_id == user.id)
+                .order_by(Item.name.asc())
+            )).all()
+
+        picks: list[app_commands.Choice[int]] = []
+        needle = current.strip().lower()
+        for inv, item in rows:
+            valid_for_slot = (
+                (normalized_slot == "weapon" and is_weapon(item))
+                or (normalized_slot == "gadget" and is_gadget(item))
+                or (normalized_slot == "healing" and is_healing(item))
+                or (normalized_slot == "shield" and is_shield(item))
+            )
+            if not valid_for_slot:
+                continue
+            if needle and needle not in item.name.lower() and needle not in str(item.id):
+                continue
+            picks.append(app_commands.Choice(name=f"{item.name} (ID {item.id}) x{inv.qty}", value=item.id))
+            if len(picks) >= 25:
+                break
+        return picks
+
     @app_commands.command(description="Equip an item from inventory to a loadout slot.")
-    async def equip(self, interaction: discord.Interaction, item_id: int, slot: str, weapon_slot: int | None = None) -> None:
+    @app_commands.describe(slot="Slot to equip", item_id="Choose an item from your inventory", weapon_slot="Only used when slot is weapon")
+    @app_commands.autocomplete(item_id=equip_item_autocomplete)
+    async def equip(
+        self,
+        interaction: discord.Interaction,
+        slot: Literal["weapon", "gadget", "healing", "shield"],
+        item_id: int,
+        weapon_slot: app_commands.Range[int, 1, 2] | None = None,
+    ) -> None:
         normalized_slot = slot.strip().lower()
-        if normalized_slot not in {"weapon", "gadget", "healing", "shield"}:
-            await interaction.response.send_message("Slot must be weapon, gadget, healing, or shield.", ephemeral=True)
-            return
 
         async with SessionLocal() as session:
             try:
@@ -340,6 +394,41 @@ class GameplayCog(commands.Cog):
         )
         file = discord.File(card, filename="profile-card.png")
         await interaction.response.send_message(file=file)
+
+    @app_commands.command(description="Open a private profile editor with buttons and menus.")
+    async def editprofile(self, interaction: discord.Interaction) -> None:
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, interaction.user.id)
+            profile = normalized_profile(user)
+            titles = (
+                await session.execute(
+                    select(Title)
+                    .join(UserTitle, UserTitle.title_id == Title.id)
+                    .where(UserTitle.user_id == user.id)
+                    .order_by(Title.name.asc())
+                )
+            ).scalars().all()
+
+        title_options = [discord.SelectOption(label=t.name[:100], value=t.id, description=t.category[:100]) for t in titles]
+
+        collected = set(profile["collected_background_ids"] if isinstance(profile.get("collected_background_ids"), list) else [])
+        background_options = [
+            discord.SelectOption(label=bg.name[:100], value=bg.id, description=bg.id[:100])
+            for bg in PROFILE_BACKGROUNDS.values()
+            if bg.id in collected
+        ]
+
+        embed = self._styled_embed(title="Profile Editor", description="Use the buttons and menus below to update your profile.")
+        embed.add_field(name="Current Callsign", value=str(profile["callsign"]), inline=False)
+        embed.add_field(name="Current Bio", value=str(profile["bio"]), inline=False)
+        embed.add_field(name="Earned Titles", value="\n".join(f"• {t.name} ({t.id})" for t in titles[:15]) or "No earned titles yet.", inline=False)
+        embed.add_field(
+            name="Collected Backgrounds",
+            value="\n".join(f"• {PROFILE_BACKGROUNDS[bg_id].name} ({bg_id})" for bg_id in sorted(collected)[:15] if bg_id in PROFILE_BACKGROUNDS) or "No backgrounds collected yet.",
+            inline=False,
+        )
+        view = ProfileEditorView(owner_id=interaction.user.id, title_options=title_options, background_options=background_options)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @app_commands.command(description="Update your profile fields.")
     async def profile_set(self, interaction: discord.Interaction, callsign: str | None = None, bio: str | None = None) -> None:
@@ -708,6 +797,37 @@ class GameplayCog(commands.Cog):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    @app_commands.command(description="Show public item stats and combat-relevant effects.")
+    async def iteminfo(self, interaction: discord.Interaction, item_id: int) -> None:
+        async with SessionLocal() as session:
+            item = await session.get(Item, item_id)
+            if item is None:
+                await interaction.response.send_message("Unknown item id.", ephemeral=True)
+                return
+        metadata = item.metadata_json or {}
+        sid = str(metadata.get("source_id") or "").lower()
+        item_kind = source_type(item)
+        embed = self._styled_embed(title=f"Item Info: {item.name}", description=str(metadata.get("description") or "No description."))
+        embed.add_field(name="ID", value=str(item.id), inline=True)
+        embed.add_field(name="Type", value=item_kind.title(), inline=True)
+        embed.add_field(name="Rarity", value=item.rarity.value.title(), inline=True)
+        embed.add_field(name="Value", value=str(item.base_value), inline=True)
+
+        if is_weapon(item):
+            base_damage = max(8, int(item.base_value / 180) + int({"common": 8, "uncommon": 10, "rare": 13, "epic": 17, "legendary": 22}.get(item.rarity.value, 10)))
+            embed.add_field(name="Estimated Damage", value=f"{base_damage} per hit", inline=True)
+        if is_shield(item):
+            reduction = SHIELD_DAMAGE_REDUCTION.get(sid, 0.2)
+            embed.add_field(name="Damage Reduction", value=f"{int(reduction * 100)}%", inline=True)
+        if is_healing(item):
+            heal = HEALING_ITEM_FLAT.get(sid, 35)
+            embed.add_field(name="Healing", value=f"Restores {heal} HP", inline=True)
+        if is_gadget(item) and not is_healing(item):
+            utility_power = max(5, int(item.base_value / 260) + 6)
+            embed.add_field(name="Utility Power", value=str(utility_power), inline=True)
+
+        await interaction.response.send_message(embed=embed)
+
     @app_commands.command(description="Craft a weapon, gadget/throwable, or healing item.")
     async def craft(self, interaction: discord.Interaction, item_id: int, qty: int = 1) -> None:
         async with SessionLocal() as session:
@@ -757,9 +877,13 @@ class GameplayCog(commands.Cog):
             if abs(me.level - them.level) > 8:
                 await interaction.response.send_message("Level difference too large. Find a closer rival.", ephemeral=True)
                 return
-            my_power = me.level + me.stats.get("combat", 10) + me.stats.get("luck", 10) * 0.25 + me.stats.get("tech", 10) * 0.15
-            their_power = them.level + them.stats.get("combat", 10) + them.stats.get("luck", 10) * 0.25 + them.stats.get("tech", 10) * 0.15
-            i_win = my_power >= their_power
+            _me_user, my_loadout = await get_equipped_loadout(session, interaction.user.id)
+            _them_user, their_loadout = await get_equipped_loadout(session, opponent.id)
+            my_power = self._combat_rating(me, my_loadout)
+            their_power = self._combat_rating(them, their_loadout)
+            roll_me = random.uniform(0.82, 1.18)
+            roll_them = random.uniform(0.82, 1.18)
+            i_win = (my_power * roll_me) >= (their_power * roll_them)
 
             winner_user = me if i_win else them
             loser_user = them if i_win else me
@@ -768,8 +892,8 @@ class GameplayCog(commands.Cog):
 
             if i_win:
                 await EventBus.emit(session, me, "PVP_WIN", {"counter_updates": {"pvp_wins": 1, "pvp_fair_wins": 1}})
-            xp_reward = 35
-            credit_reward = 120
+            xp_reward = random.randint(28, 48)
+            credit_reward = random.randint(90, 170)
             winner_user.xp += xp_reward
             winner_user.credits += credit_reward
             winner_user.level = level_from_xp(winner_user.xp)
@@ -777,20 +901,27 @@ class GameplayCog(commands.Cog):
             loser_stats = dict(loser_user.stats or {})
             max_hp = int(loser_stats.get("max_health", 100) or 100)
             loser_hp = int(loser_stats.get("health", max_hp) or max_hp)
-            loser_stats["health"] = max(1, loser_hp - 18)
+            hp_penalty = random.randint(12, 22)
+            loser_stats["health"] = max(1, loser_hp - hp_penalty)
             loser_user.stats = loser_stats
 
             await session.commit()
 
-        flavor = (
-            f"{winner_member.mention} fought off {loser_member.mention} valiantly and claimed the arena."
-            if i_win else
-            f"{loser_member.mention} fell and died, so {winner_member.mention} wins the duel."
-        )
+        flavor_pool = [
+            f"{winner_member.mention} baited a reload and landed the finishing burst on {loser_member.mention}.",
+            f"{loser_member.mention} had the early advantage, but {winner_member.mention} turned it around with better positioning.",
+            f"A chaos grenade broke the tempo and {winner_member.mention} capitalized first.",
+            f"After a long standoff, {winner_member.mention} committed to the push and won the duel.",
+            f"Both raiders traded heavy hits, but {winner_member.mention} survived the final exchange.",
+            f"The arena lights flickered and {winner_member.mention} used the opening to outplay {loser_member.mention}.",
+        ]
+        upset = abs(my_power - their_power) > 6 and ((i_win and my_power < their_power) or ((not i_win) and their_power < my_power))
+        flavor = random.choice(flavor_pool) + (" **Upset win!**" if upset else "")
         await interaction.response.send_message(
             f"{flavor}\n"
+            f"Power check: **{my_power:.1f}** vs **{their_power:.1f}** (variance applied).\n"
             f"Winner reward: **+{xp_reward} XP**, **+{credit_reward} credits**. "
-            f"Loser penalty: **-18 HP**."
+            f"Loser penalty: **-{hp_penalty} HP**."
         )
 
     @app_commands.command(description="Create a pending trade offer.")

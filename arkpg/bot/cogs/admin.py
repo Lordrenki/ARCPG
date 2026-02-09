@@ -135,17 +135,17 @@ class AdminCog(commands.Cog):
             rows = (await session.execute(select(Item).order_by(Item.type.asc(), Item.name.asc()))).scalars().all()
             await session.commit()
 
-        grouped: dict[str, list[str]] = {}
+        grouped: dict[str, list[tuple[int, str]]] = {}
         for row in rows:
             key = row.type.value
-            grouped.setdefault(key, []).append(row.name)
+            grouped.setdefault(key, []).append((row.id, row.name))
 
         if category:
             names = grouped.get(category.lower())
             if not names:
                 await interaction.response.send_message("Unknown category. Use weapon, armor, gadget, component, blueprint, recyclable.", ephemeral=True)
                 return
-            preview = "\n".join(f"• {name}" for name in names[:40])
+            preview = "\n".join(f"• `{item_id}` — {name}" for item_id, name in names[:40])
             await interaction.response.send_message(f"**{category.title()} Items ({len(names)})**\n{preview}", ephemeral=True)
             return
 
