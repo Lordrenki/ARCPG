@@ -3,6 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 from sqlalchemy import and_, select
 
+from arkpg.bot.profile_card import render_profile_card
 from arkpg.bot.views import PaginatedEmbedView
 from arkpg.core.config import get_settings
 from arkpg.db.models import (
@@ -26,6 +27,7 @@ from arkpg.db.models import (
 )
 from arkpg.db.session import SessionLocal
 from arkpg.game.constants import RARITY_COLORS, ZONE_CONFIG
+from arkpg.game.profile_backgrounds import PROFILE_BACKGROUNDS, get_background
 from arkpg.game.progression import ActivityService, EventBus, ExpeditionService, QuestService, SeederService, TitleService
 from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
 from arkpg.game.service import (
@@ -35,6 +37,7 @@ from arkpg.game.service import (
     equip_loadout_item,
     extract_deployment,
     get_equipped_loadout,
+    collect_profile_background,
     get_or_create_user,
     normalized_profile,
     start_deployment,
@@ -211,22 +214,32 @@ class GameplayCog(commands.Cog):
         embed.add_field(name="Shield", value=(loadout.get("shield") or {}).get("name", "None"), inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(description="View your customizable profile.")
+    @app_commands.command(description="View your customizable profile card.")
     async def profile(self, interaction: discord.Interaction) -> None:
         async with SessionLocal() as session:
             user = await get_or_create_user(session, interaction.user.id)
             profile = normalized_profile(user)
             title = (await session.get(Title, user.equipped_title_id)).name if user.equipped_title_id else "Unassigned"
+
         combat = user.stats.get("combat", 10)
         tech = user.stats.get("tech", 10)
         luck = user.stats.get("luck", 10)
-        embed = self._styled_embed(title="⚔️ Raider Dossier")
-        embed.description = f"**{profile['callsign']}**\n{title}"
-        embed.add_field(name="📊 Attributes", value=f"⚔️ Combat `{combat}` • 🛠️ Tech `{tech}` • 🍀 Luck `{luck}`", inline=False)
-        embed.add_field(name="🧭 Progress", value=f"Level `{user.level}` • Scraps `{user.credits}`", inline=False)
-        embed.add_field(name="📝 Bio", value=profile["bio"], inline=False)
-        embed.set_footer(text="ARCPG Alpha V.0.5")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        background = get_background(str(profile["background_id"]))
+        card = await render_profile_card(
+            interaction_user=interaction.user,
+            callsign=str(profile["callsign"]),
+            title_name=title,
+            bio=str(profile["bio"]),
+            level=user.level,
+            xp=user.xp,
+            credits=user.credits,
+            combat=combat,
+            tech=tech,
+            luck=luck,
+            background=background,
+        )
+        file = discord.File(card, filename="profile-card.png")
+        await interaction.response.send_message(file=file, ephemeral=True)
 
     @app_commands.command(description="Update your profile fields.")
     async def profile_set(self, interaction: discord.Interaction, callsign: str | None = None, bio: str | None = None) -> None:
@@ -238,6 +251,63 @@ class GameplayCog(commands.Cog):
         embed = self._styled_embed(title="Raider Profile Updated")
         embed.add_field(name="Callsign", value=profile["callsign"], inline=False)
         embed.add_field(name="Bio", value=profile["bio"], inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(description="List profile backgrounds you've collected.")
+    async def backgrounds_list(self, interaction: discord.Interaction) -> None:
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, interaction.user.id)
+            profile = normalized_profile(user)
+
+        collected = set(profile["collected_background_ids"] if isinstance(profile.get("collected_background_ids"), list) else [])
+        active_id = str(profile["background_id"])
+        rows = []
+        for bg_id, bg in PROFILE_BACKGROUNDS.items():
+            if bg_id not in collected:
+                continue
+            marker = " ✅ Equipped" if bg_id == active_id else ""
+            rows.append(f"• `{bg.id}` — {bg.name}{marker}")
+
+        embed = self._styled_embed(title="Collected Backgrounds")
+        embed.description = "\n".join(rows) if rows else "No backgrounds collected yet."
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(description="Equip a collected profile background.")
+    async def background_equip(self, interaction: discord.Interaction, background_id: str) -> None:
+        background_id = background_id.strip().lower()
+        if background_id not in PROFILE_BACKGROUNDS:
+            await interaction.response.send_message("Unknown background id.", ephemeral=True)
+            return
+        async with SessionLocal() as session:
+            try:
+                _, profile = await update_user_profile(session, interaction.user.id, background_id=background_id)
+            except ValueError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
+
+        embed = self._styled_embed(title="Background Equipped")
+        embed.add_field(name="Background", value=PROFILE_BACKGROUNDS[background_id].name, inline=False)
+        embed.add_field(name="ID", value=str(profile["background_id"]), inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(description="Admin: grant a profile background to a user.")
+    async def background_grant(self, interaction: discord.Interaction, member: discord.Member, background_id: str) -> None:
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("Administrator permissions required.", ephemeral=True)
+            return
+
+        background_id = background_id.strip().lower()
+        if background_id not in PROFILE_BACKGROUNDS:
+            await interaction.response.send_message("Unknown background id.", ephemeral=True)
+            return
+
+        async with SessionLocal() as session:
+            _, profile = await collect_profile_background(session, member.id, background_id)
+
+        embed = self._styled_embed(title="Background Granted")
+        embed.add_field(name="User", value=member.mention, inline=False)
+        embed.add_field(name="Background", value=PROFILE_BACKGROUNDS[background_id].name, inline=False)
+        embed.add_field(name="Total Collected", value=str(len(profile["collected_background_ids"])), inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="List titles.")
