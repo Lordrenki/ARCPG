@@ -52,6 +52,9 @@ async def render_profile_card(
     combat: int,
     tech: int,
     luck: int,
+    equipped_weapons: list[str],
+    equipped_gadget: str,
+    equipped_healing: str,
     background: ProfileBackground,
 ) -> BytesIO:
     base = _build_background(background).convert("RGBA")
@@ -76,23 +79,46 @@ async def render_profile_card(
         mid_font = ImageFont.load_default()
         small_font = ImageFont.load_default()
 
+    draw.text((38, 32), f"Lv {level}", fill=(255, 255, 255), font=mid_font)
     draw.text((210, 56), callsign, fill=(245, 245, 245), font=name_font)
     draw.text((210, 102), f"{title_name}", fill=(205, 205, 205), font=mid_font)
-    draw.text((38, 236), f"Lv {level}", fill=(255, 255, 255), font=mid_font)
 
     current_xp, needed_xp, progress = _xp_progress(xp, level)
     bar_x, bar_y, bar_w, bar_h = 38, 274, CARD_SIZE - 76, 26
     draw.rounded_rectangle((bar_x, bar_y, bar_x + bar_w, bar_y + bar_h), radius=13, fill=(100, 100, 100, 180))
     filled_width = int(bar_w * progress)
     draw.rounded_rectangle((bar_x, bar_y, bar_x + filled_width, bar_y + bar_h), radius=13, fill=(214, 186, 120, 230))
-    draw.text((bar_x, bar_y + 34), f"XP {current_xp}/{needed_xp}", fill=(236, 236, 236), font=small_font)
+    draw.text((bar_x + 12, bar_y + 2), "XP", fill=(255, 255, 255), font=small_font)
+    draw.text((bar_x, bar_y + 34), f"{current_xp}/{needed_xp}", fill=(236, 236, 236), font=small_font)
 
-    draw.text((38, 356), f"Combat {combat}   Tech {tech}   Luck {luck}", fill=(238, 238, 238), font=mid_font)
-    draw.text((38, 398), f"Credits {credits}", fill=(238, 238, 238), font=mid_font)
+    equipped_box = (470, 260, CARD_SIZE - 38, 362)
+    draw.rounded_rectangle(equipped_box, radius=14, fill=(132, 149, 201, 210))
+    draw.text((486, 268), "Equipped", fill=(255, 255, 255), font=small_font)
+    weapon_text = "None"
+    if equipped_weapons:
+        weapon_text = equipped_weapons[0]
+        if len(equipped_weapons) > 1:
+            weapon_text = f"{weapon_text} +{len(equipped_weapons) - 1}"
+    if len(weapon_text) > 17:
+        weapon_text = f"{weapon_text[:14]}..."
+    gadget_text = equipped_gadget[:12] + ("..." if len(equipped_gadget) > 12 else "")
+    healing_text = equipped_healing[:14] + ("..." if len(equipped_healing) > 14 else "")
+    draw.text((486, 296), f"Weapons: {weapon_text}", fill=(255, 255, 255), font=small_font)
+    draw.text((486, 320), f"Gadget: {gadget_text}", fill=(255, 255, 255), font=small_font)
+    draw.text((486, 344), f"Healing: {healing_text}", fill=(255, 255, 255), font=small_font)
+
+    draw.text((38, 354), "⚔", fill=(255, 255, 255), font=mid_font)
+    draw.text((74, 356), f"Combat {combat}", fill=(238, 238, 238), font=mid_font)
+    draw.text((38, 396), "⌬", fill=(255, 255, 255), font=mid_font)
+    draw.text((74, 398), f"Tech {tech}", fill=(238, 238, 238), font=mid_font)
+    draw.text((38, 438), "★", fill=(255, 255, 255), font=mid_font)
+    draw.text((74, 440), f"Luck {luck}", fill=(238, 238, 238), font=mid_font)
+    draw.text((250, 354), "◈", fill=(255, 255, 255), font=mid_font)
+    draw.text((286, 356), f"Scraps {credits}", fill=(238, 238, 238), font=mid_font)
 
     bio_text = bio[:160]
-    draw.text((38, 446), "About", fill=(255, 255, 255), font=mid_font)
-    draw.multiline_text((38, 478), bio_text, fill=(218, 218, 218), font=small_font, spacing=4)
+    draw.text((38, 506), "Bio", fill=(255, 255, 255), font=mid_font)
+    draw.multiline_text((38, 540), bio_text, fill=(218, 218, 218), font=small_font, spacing=4)
 
     out = BytesIO()
     base.convert("RGB").save(out, format="PNG")
