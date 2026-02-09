@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from datetime import datetime, timezone
 
 from sqlalchemy import and_, select
@@ -36,6 +37,9 @@ async def get_or_create_user(session: AsyncSession, discord_id: int) -> User:
     result = await session.execute(select(User).where(User.discord_id == discord_id))
     user = result.scalar_one_or_none()
     if user:
+        expected_level = level_from_xp(int(user.xp or 0))
+        if user.level != expected_level:
+            user.level = expected_level
         stats = scale_stats_with_level(dict(user.stats or {}), user.level)
         user.stats = stats
         return user
@@ -111,8 +115,60 @@ async def claim_idle(session: AsyncSession, settings: Settings, discord_id: int)
         settings.idle_claim_cap_hours,
     )
     user.last_claim_at = now
+    xp_gain = int(xp_gain * 0.2)
     user.xp += xp_gain
     user.credits += credits_gain
+
+    basic_materials = ["fabric", "metal_parts", "chemicals", "duct_tape", "wires", "battery", "light_gun_parts"]
+    source_rows = (
+        await session.execute(
+            select(Item).where(Item.metadata_json["source_id"].as_string().in_(basic_materials))
+        )
+    ).scalars().all()
+    by_source_id = {
+        str((item.metadata_json or {}).get("source_id") or "").strip().lower(): item
+        for item in source_rows
+    }
+
+    granted_materials: list[tuple[str, int]] = []
+    fabric_item = by_source_id.get("fabric")
+    if fabric_item:
+        fabric_qty = random.randint(1, 10)
+        fabric_inv = (
+            await session.execute(
+                select(Inventory).where(
+                    and_(Inventory.user_id == user.id, Inventory.item_id == fabric_item.id, Inventory.weapon_level.is_(None))
+                )
+            )
+        ).scalar_one_or_none()
+        if fabric_inv:
+            fabric_inv.qty += fabric_qty
+        else:
+            session.add(Inventory(user_id=user.id, item_id=fabric_item.id, qty=fabric_qty))
+        granted_materials.append((fabric_item.name, fabric_qty))
+
+    extra_material_sources = [sid for sid in basic_materials if sid != "fabric" and sid in by_source_id]
+    random.shuffle(extra_material_sources)
+    for source_id in extra_material_sources[:2]:
+        item = by_source_id[source_id]
+        qty = random.randint(1, 3)
+        inv = (
+            await session.execute(
+                select(Inventory).where(
+                    and_(Inventory.user_id == user.id, Inventory.item_id == item.id, Inventory.weapon_level.is_(None))
+                )
+            )
+        ).scalar_one_or_none()
+        if inv:
+            inv.qty += qty
+        else:
+            session.add(Inventory(user_id=user.id, item_id=item.id, qty=qty))
+        granted_materials.append((item.name, qty))
+
+    if granted_materials:
+        user.stats = dict(user.stats or {})
+        user.stats["last_claim_materials"] = [{"name": name, "qty": qty} for name, qty in granted_materials]
+
     user.level = level_from_xp(user.xp)
     user.stats = scale_stats_with_level(dict(user.stats or {}), user.level)
     if minutes < 1:

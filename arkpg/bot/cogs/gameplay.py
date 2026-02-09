@@ -545,6 +545,15 @@ class GameplayCog(commands.Cog):
         embed.add_field(name="Recovered Time", value=f"{minutes} min")
         embed.add_field(name="XP", value=f"+{xp}")
         embed.add_field(name="Credits", value=f"+{credits}")
+        materials = (user.stats or {}).get("last_claim_materials", [])
+        if isinstance(materials, list) and materials:
+            material_text = "\n".join(
+                f"• {entry.get('name', 'Unknown')} x{entry.get('qty', 0)}"
+                for entry in materials
+                if isinstance(entry, dict)
+            )
+            if material_text:
+                embed.add_field(name="Basic Materials", value=material_text, inline=False)
         embed.set_footer(text=f"ARCPG Alpha V.0.5 • Level {user.level}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
