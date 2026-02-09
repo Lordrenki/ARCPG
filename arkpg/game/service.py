@@ -79,6 +79,25 @@ async def ensure_starter_kit(session: AsyncSession, user: User) -> None:
     loadout["gadget"] = None
     loadout["healing"] = as_item_payload(bandage) if bandage else None
     loadout["shield"] = as_item_payload(shield) if shield else None
+
+    equipped_item_ids = [
+        kettle.id if kettle else None,
+        bandage.id if bandage else None,
+        shield.id if shield else None,
+    ]
+    for equipped_item_id in [x for x in equipped_item_ids if x]:
+        inv = (
+            await session.execute(
+                select(Inventory).where(
+                    and_(Inventory.user_id == user.id, Inventory.item_id == equipped_item_id, Inventory.weapon_level.is_(None), Inventory.qty > 0)
+                )
+            )
+        ).scalar_one_or_none()
+        if inv:
+            inv.qty -= 1
+            if inv.qty <= 0:
+                await session.delete(inv)
+
     set_user_loadout(user, loadout)
 
 async def claim_idle(session: AsyncSession, settings: Settings, discord_id: int) -> tuple[User, int, int, int]:
@@ -297,6 +316,27 @@ def _apply_deployment_survivability(user: User, event_damage: int, payload: dict
     return {"incoming_damage": event_damage, "effective_damage": mitigated, "healing_used": healing_used, "health_after": stats["health"]}
 
 
+def _payload_item_id(item_payload: dict | None) -> int | None:
+    if not item_payload:
+        return None
+    raw = item_payload.get("item_id")
+    if raw is None:
+        return None
+    return int(raw)
+
+
+async def _increment_inventory_qty(session: AsyncSession, user_id: int, item_id: int, qty: int = 1) -> None:
+    row = (
+        await session.execute(
+            select(Inventory).where(and_(Inventory.user_id == user_id, Inventory.item_id == item_id, Inventory.weapon_level.is_(None)))
+        )
+    ).scalar_one_or_none()
+    if row:
+        row.qty += qty
+    else:
+        session.add(Inventory(user_id=user_id, item_id=item_id, qty=qty))
+
+
 
 async def get_user_inventory_items(session: AsyncSession, user: User) -> list[tuple[Inventory, Item]]:
     return (await session.execute(select(Inventory, Item).join(Item, Inventory.item_id == Item.id).where(Inventory.user_id == user.id))).all()
@@ -390,10 +430,16 @@ async def craft_item(session: AsyncSession, discord_id: int, item_id: int, qty: 
 
 async def equip_loadout_item(session: AsyncSession, discord_id: int, item_id: int, slot: str, weapon_index: int | None = None) -> tuple[User, dict]:
     user = await get_or_create_user(session, discord_id)
-    inv_item = (await session.execute(select(Inventory, Item).join(Item, Inventory.item_id == Item.id).where(and_(Inventory.user_id == user.id, Inventory.item_id == item_id)))).first()
+    inv_item = (
+        await session.execute(
+            select(Inventory, Item)
+            .join(Item, Inventory.item_id == Item.id)
+            .where(and_(Inventory.user_id == user.id, Inventory.item_id == item_id, Inventory.weapon_level.is_(None), Inventory.qty > 0))
+        )
+    ).first()
     if inv_item is None:
         raise ValueError("Item not found in your inventory.")
-    _inv, item = inv_item
+    inv, item = inv_item
 
     from arkpg.game.loadout import is_gadget, is_healing, is_shield, is_weapon
 
@@ -410,23 +456,78 @@ async def equip_loadout_item(session: AsyncSession, discord_id: int, item_id: in
             raise ValueError("Weapon slot must be 1 or 2.")
         while len(weapons) < 2:
             weapons.append(None)
+        replaced_item_id = _payload_item_id(weapons[weapon_index - 1])
         weapons[weapon_index - 1] = payload
         loadout["weapons"] = weapons
+        if replaced_item_id:
+            await _increment_inventory_qty(session, user.id, replaced_item_id, qty=1)
     elif slot == "gadget":
         if not is_gadget(item):
             raise ValueError("That item is not a gadget/throwable.")
+        replaced_item_id = _payload_item_id(loadout.get("gadget"))
         loadout["gadget"] = payload
+        if replaced_item_id:
+            await _increment_inventory_qty(session, user.id, replaced_item_id, qty=1)
     elif slot == "healing":
         if not is_healing(item):
             raise ValueError("That item is not a healing item.")
+        replaced_item_id = _payload_item_id(loadout.get("healing"))
         loadout["healing"] = payload
+        if replaced_item_id:
+            await _increment_inventory_qty(session, user.id, replaced_item_id, qty=1)
     elif slot == "shield":
         if not is_shield(item):
             raise ValueError("That item is not a shield.")
+        replaced_item_id = _payload_item_id(loadout.get("shield"))
         loadout["shield"] = payload
+        if replaced_item_id:
+            await _increment_inventory_qty(session, user.id, replaced_item_id, qty=1)
     else:
         raise ValueError("Unknown slot.")
 
+    inv.qty -= 1
+    if inv.qty <= 0:
+        await session.delete(inv)
+
+    set_user_loadout(user, loadout)
+    await session.commit()
+    return user, loadout
+
+
+async def unequip_loadout_item(session: AsyncSession, discord_id: int, slot: str, weapon_index: int | None = None) -> tuple[User, dict]:
+    user = await get_or_create_user(session, discord_id)
+    loadout = get_user_loadout(user)
+
+    if slot == "weapon":
+        weapons = list(loadout.get("weapons") or [])
+        if weapon_index not in (1, 2):
+            raise ValueError("Weapon slot must be 1 or 2.")
+        while len(weapons) < 2:
+            weapons.append(None)
+        item_id = _payload_item_id(weapons[weapon_index - 1])
+        if not item_id:
+            raise ValueError("No weapon is equipped in that slot.")
+        weapons[weapon_index - 1] = None
+        loadout["weapons"] = weapons
+    elif slot == "gadget":
+        item_id = _payload_item_id(loadout.get("gadget"))
+        if not item_id:
+            raise ValueError("No gadget is equipped.")
+        loadout["gadget"] = None
+    elif slot == "healing":
+        item_id = _payload_item_id(loadout.get("healing"))
+        if not item_id:
+            raise ValueError("No healing item is equipped.")
+        loadout["healing"] = None
+    elif slot == "shield":
+        item_id = _payload_item_id(loadout.get("shield"))
+        if not item_id:
+            raise ValueError("No shield is equipped.")
+        loadout["shield"] = None
+    else:
+        raise ValueError("Unknown slot.")
+
+    await _increment_inventory_qty(session, user.id, item_id, qty=1)
     set_user_loadout(user, loadout)
     await session.commit()
     return user, loadout

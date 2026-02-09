@@ -42,7 +42,7 @@ def _add_bottom_fade(image: Image.Image) -> None:
     draw = ImageDraw.Draw(overlay)
     for y in range(CARD_SIZE):
         t = y / (CARD_SIZE - 1)
-        alpha = int(220 * (t**1.8))
+        alpha = int(85 + (170 * (t**1.7)))
         draw.line([(0, y), (CARD_SIZE, y)], fill=(0, 0, 0, alpha))
     image.alpha_composite(overlay)
 
@@ -137,7 +137,11 @@ async def render_profile_card(
     if hp_filled > 0:
         draw.rounded_rectangle((hp_x + fill_inset, bar_y + fill_inset, hp_x + fill_inset + hp_filled, bar_y + bar_h - fill_inset), radius=10, fill=hp_color)
     draw.text((hp_x + 12, bar_y + 12), "HP", fill=(255, 255, 255), font=mid_bold_font)
-    draw.text((hp_x + hp_w - 110, bar_y + 12), f"{health}/100", fill=(240, 240, 240), font=mid_bold_font)
+    hp_text = f"{health}/{max_health}"
+    hp_box = draw.textbbox((0, 0), hp_text, font=mid_bold_font)
+    hp_text_w = hp_box[2] - hp_box[0]
+    hp_text_x = max(hp_x + 78, hp_x + hp_w - hp_text_w - 14)
+    draw.text((hp_text_x, bar_y + 12), hp_text, fill=(240, 240, 240), font=mid_bold_font)
 
     equipped_title_y = bar_y + bar_h + 18
     draw.rounded_rectangle((equipped_x, equipped_title_y, equipped_x + equipped_w, equipped_title_y + bar_h), radius=14, fill=(132, 149, 201, 210))

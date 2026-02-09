@@ -47,6 +47,7 @@ from arkpg.game.service import (
     claim_idle,
     craft_item,
     equip_loadout_item,
+    unequip_loadout_item,
     extract_deployment,
     get_equipped_loadout,
     collect_profile_background,
@@ -605,9 +606,24 @@ class GameplayCog(commands.Cog):
     async def inventory(self, interaction: discord.Interaction) -> None:
         async with SessionLocal() as session:
             user = await get_or_create_user(session, interaction.user.id)
-            rows = (await session.execute(select(Inventory, Item).join(Item, Inventory.item_id == Item.id).where(Inventory.user_id == user.id))).all()
+            loadout = (user.stats or {}).get("loadout", {}) if isinstance(user.stats, dict) else {}
+            equipped_item_ids = {
+                int(payload.get("item_id"))
+                for payload in [*(loadout.get("weapons") or []), loadout.get("gadget"), loadout.get("healing"), loadout.get("shield")]
+                if isinstance(payload, dict) and payload.get("item_id")
+            }
+            rows = (
+                await session.execute(
+                    select(Inventory, Item)
+                    .join(Item, Inventory.item_id == Item.id)
+                    .where(and_(Inventory.user_id == user.id, Inventory.weapon_level.is_(None), Inventory.qty > 0))
+                    .order_by(Item.name.asc())
+                )
+            ).all()
+
+        visible_rows = [(inv, item) for inv, item in rows if item.id not in equipped_item_ids]
         embed = self._styled_embed(title="Field Inventory")
-        embed.description = "\n".join(f"• {item.name} x{inv.qty}" for inv, item in rows[:20]) if rows else "Your stash is empty."
+        embed.description = "\n".join(f"• {item.name} x{inv.qty}" for inv, item in visible_rows[:20]) if visible_rows else "Your stash is empty."
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="View your equipped combat loadout.")
@@ -708,6 +724,30 @@ class GameplayCog(commands.Cog):
         async with SessionLocal() as session:
             try:
                 _user, loadout = await equip_loadout_item(session, interaction.user.id, item_id=item_id, slot=normalized_slot, weapon_index=weapon_slot)
+            except ValueError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
+
+        weapons = [w for w in (loadout.get("weapons") or []) if w]
+        embed = self._styled_embed(title="Loadout Updated")
+        embed.add_field(name="Weapons", value="\n".join(f"• {w['name']}" for w in weapons) or "None equipped", inline=False)
+        embed.add_field(name="Gadget", value=(loadout.get("gadget") or {}).get("name", "None"), inline=True)
+        embed.add_field(name="Healing", value=(loadout.get("healing") or {}).get("name", "None"), inline=True)
+        embed.add_field(name="Shield", value=(loadout.get("shield") or {}).get("name", "None"), inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(description="Unequip an item from a loadout slot back into inventory.")
+    @app_commands.describe(slot="Slot to clear", weapon_slot="Required when slot is weapon")
+    async def unequip(
+        self,
+        interaction: discord.Interaction,
+        slot: Literal["weapon", "gadget", "healing", "shield"],
+        weapon_slot: app_commands.Range[int, 1, 2] | None = None,
+    ) -> None:
+        normalized_slot = slot.strip().lower()
+        async with SessionLocal() as session:
+            try:
+                _user, loadout = await unequip_loadout_item(session, interaction.user.id, slot=normalized_slot, weapon_index=weapon_slot)
             except ValueError as exc:
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
