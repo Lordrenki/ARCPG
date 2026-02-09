@@ -15,6 +15,7 @@ class DeploymentResolution:
     loot: list[dict]
     durability_loss: int
     event: str
+    damage_taken: int
 
 
 def make_seed(user_id: int, zone: str, started_at: datetime) -> str:
@@ -28,15 +29,15 @@ def deployment_end(zone: str, now: datetime | None = None) -> datetime:
     return now + timedelta(minutes=mins)
 
 
-def resolve_deployment(seed: str, zone: str, level: int, extract_late: bool = False) -> DeploymentResolution:
+def resolve_deployment(seed: str, zone: str, level: int, extract_late: bool = False, loadout_power: float = 0.0) -> DeploymentResolution:
     cfg = ZONE_CONFIG[zone]
     roller = LootRoller(seed)
     event = roller.roll_event()
-    risk = cfg["risk"] + (0.05 if extract_late else 0.0)
+    risk = max(0.05, cfg["risk"] + (0.05 if extract_late else 0.0) - min(loadout_power / 2000, 0.2))
     success_roll = roller.rng.random()
 
     if success_roll < risk * 0.55:
-        return DeploymentResolution("failure", 0, int(20 * cfg["reward_mult"]), [], 20, event)
+        return DeploymentResolution("failure", 0, int(20 * cfg["reward_mult"]), [], 20, event, int(35 + cfg["reward_mult"] * 14))
 
     partial = success_roll < risk
     loot_count = 1 if partial else roller.rng.randint(2, 4)
@@ -53,4 +54,5 @@ def resolve_deployment(seed: str, zone: str, level: int, extract_late: bool = Fa
     credits = int((75 + level * 8) * cfg["reward_mult"] * (0.65 if partial else 1.0))
     xp = int((95 + level * 12) * cfg["reward_mult"] * (0.75 if partial else 1.0))
     durability_loss = int(8 * cfg["reward_mult"] + (6 if partial else 0))
-    return DeploymentResolution("partial" if partial else "success", credits, xp, loot, durability_loss, event)
+    base_damage = int(18 + cfg["risk"] * 55 + (6 if partial else 0))
+    return DeploymentResolution("partial" if partial else "success", credits, xp, loot, durability_loss, event, base_damage)

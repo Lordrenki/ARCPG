@@ -20,6 +20,7 @@ from arkpg.db.models import (
 )
 from arkpg.game.deployments import deployment_end, make_seed, resolve_deployment
 from arkpg.game.economy import compute_idle_rewards, level_from_xp
+from arkpg.game.loadout import as_item_payload, healing_amount, item_power_from_payload, shield_reduction
 from arkpg.game.progression import EventBus
 
 
@@ -71,6 +72,12 @@ async def start_deployment(session: AsyncSession, discord_id: int, zone: str) ->
 
     now = datetime.now(timezone.utc)
     seed = make_seed(user.id, zone, now)
+    stats = dict(user.stats) if isinstance(user.stats, dict) else {}
+    stats.setdefault("max_health", 100)
+    stats.setdefault("health", stats.get("max_health", 100))
+    stats.setdefault("loadout", _default_loadout())
+    user.stats = stats
+
     dep = Deployment(user_id=user.id, zone=zone, started_at=now, ends_at=deployment_end(zone, now), seeded_rng=seed)
     session.add(dep)
     await session.commit()
@@ -90,7 +97,8 @@ async def extract_deployment(session: AsyncSession, discord_id: int, auto: bool 
     if now < as_utc(dep.ends_at):
         raise ValueError("Deployment is still running.")
 
-    resolution = resolve_deployment(dep.seeded_rng, dep.zone, user.level, extract_late=auto)
+    loadout_power = compute_loadout_power(user)
+    resolution = resolve_deployment(dep.seeded_rng, dep.zone, user.level, extract_late=auto, loadout_power=loadout_power["total_power"])
     dep.status = DeploymentStatus.EXTRACTED if resolution.status != "failure" else DeploymentStatus.FAILED
     dep.carried_loot = {"outcome": resolution.status, "loot": resolution.loot, "event": resolution.event}
 
@@ -101,6 +109,7 @@ async def extract_deployment(session: AsyncSession, discord_id: int, auto: bool 
     stats["raid_clears"] = int(stats.get("raid_clears", 0)) + (1 if resolution.status != "failure" else 0)
     stats["legendary_finds"] = int(stats.get("legendary_finds", 0)) + sum(1 for x in resolution.loot if x["rarity"] == "legendary")
     user.stats = stats
+    survivability = _apply_deployment_survivability(user, resolution.damage_taken, loadout_power)
 
     for loot in resolution.loot:
         item_q = await session.execute(select(Item).where(Item.name == loot["name"]))
@@ -116,10 +125,13 @@ async def extract_deployment(session: AsyncSession, discord_id: int, auto: bool 
         else:
             session.add(Inventory(user_id=user.id, item_id=item.id, qty=loot["qty"]))
 
-    session.add(AuditLog(event_type="deployment_resolved", payload={"discord_id": discord_id, "deployment_id": dep.id, "resolution": resolution.__dict__}))
+    session.add(AuditLog(event_type="deployment_resolved", payload={"discord_id": discord_id, "deployment_id": dep.id, "resolution": resolution.__dict__, "survivability": survivability}))
     await EventBus.emit(session, user, "EXTRACT_SUCCESS" if resolution.status != "failure" else "RAID_COMPLETED", {"counter_updates": {"raid_clears": 1 if resolution.status != "failure" else 0, "legendary_finds": sum(1 for x in resolution.loot if x["rarity"] == "legendary"), "extract_streak": 1 if resolution.status != "failure" else -int((user.progression_json or {}).get("extract_streak",0))}})
     await session.commit()
-    return resolution.__dict__
+    payload = resolution.__dict__
+    payload["survivability"] = survivability
+    payload["loadout_power"] = round(loadout_power["total_power"], 2)
+    return payload
 
 
 async def atomic_trade_confirm(session: AsyncSession, trade_id: int) -> Trade:
@@ -180,6 +192,115 @@ async def atomic_trade_confirm(session: AsyncSession, trade_id: int) -> Trade:
     trade.status = TradeStatus.CONFIRMED
     await session.commit()
     return trade
+
+
+def _default_loadout() -> dict:
+    return {"weapons": [], "gadget": None, "healing": None, "shield": None}
+
+
+def get_user_loadout(user: User) -> dict:
+    stats = dict(user.stats) if isinstance(user.stats, dict) else {}
+    loadout = dict(stats.get("loadout") or {})
+    loadout.setdefault("weapons", [])
+    loadout.setdefault("gadget", None)
+    loadout.setdefault("healing", None)
+    loadout.setdefault("shield", None)
+    return loadout
+
+
+def set_user_loadout(user: User, loadout: dict) -> None:
+    stats = dict(user.stats) if isinstance(user.stats, dict) else {}
+    stats["loadout"] = loadout
+    user.stats = stats
+
+
+def compute_loadout_power(user: User) -> dict:
+    loadout = get_user_loadout(user)
+    stats = user.stats if isinstance(user.stats, dict) else {}
+    weapon_power = sum(item_power_from_payload(w, stats) for w in (loadout.get("weapons") or []))
+    gadget_power = item_power_from_payload(loadout["gadget"], stats) * 0.45 if loadout.get("gadget") else 0.0
+    return {
+        "weapon_power": weapon_power,
+        "gadget_power": gadget_power,
+        "total_power": weapon_power + gadget_power,
+        "shield_reduction": shield_reduction(loadout.get("shield")),
+        "healing_amount": healing_amount(loadout.get("healing")),
+    }
+
+
+def _apply_deployment_survivability(user: User, event_damage: int, payload: dict) -> dict:
+    stats = dict(user.stats) if isinstance(user.stats, dict) else {}
+    max_health = int(stats.get("max_health", 100) or 100)
+    current = int(stats.get("health", max_health) or max_health)
+    reduction = float(payload.get("shield_reduction", 0.0) or 0.0)
+    mitigated = max(0, int(round(event_damage * (1.0 - reduction))))
+    post = current - mitigated
+    healing_used = False
+    if post <= 0 and payload.get("healing_amount", 0) > 0:
+        healing_used = True
+        post = max(1, int(payload["healing_amount"]))
+        loadout = get_user_loadout(user)
+        loadout["healing"] = None
+        set_user_loadout(user, loadout)
+    stats["max_health"] = max_health
+    stats["health"] = max(1, min(max_health, post))
+    user.stats = stats
+    return {"incoming_damage": event_damage, "effective_damage": mitigated, "healing_used": healing_used, "health_after": stats["health"]}
+
+
+
+async def get_user_inventory_items(session: AsyncSession, user: User) -> list[tuple[Inventory, Item]]:
+    return (await session.execute(select(Inventory, Item).join(Item, Inventory.item_id == Item.id).where(Inventory.user_id == user.id))).all()
+
+
+async def equip_loadout_item(session: AsyncSession, discord_id: int, item_id: int, slot: str, weapon_index: int | None = None) -> tuple[User, dict]:
+    user = await get_or_create_user(session, discord_id)
+    inv_item = (await session.execute(select(Inventory, Item).join(Item, Inventory.item_id == Item.id).where(and_(Inventory.user_id == user.id, Inventory.item_id == item_id)))).first()
+    if inv_item is None:
+        raise ValueError("Item not found in your inventory.")
+    _inv, item = inv_item
+
+    from arkpg.game.loadout import is_gadget, is_healing, is_shield, is_weapon
+
+    loadout = get_user_loadout(user)
+    payload = as_item_payload(item)
+
+    if slot == "weapon":
+        if not is_weapon(item):
+            raise ValueError("That item is not a weapon.")
+        weapons = list(loadout.get("weapons") or [])
+        if weapon_index is None:
+            weapon_index = 1 if len(weapons) < 1 else 2
+        if weapon_index not in (1, 2):
+            raise ValueError("Weapon slot must be 1 or 2.")
+        while len(weapons) < 2:
+            weapons.append(None)
+        weapons[weapon_index - 1] = payload
+        loadout["weapons"] = weapons
+    elif slot == "gadget":
+        if not is_gadget(item):
+            raise ValueError("That item is not a gadget/throwable.")
+        loadout["gadget"] = payload
+    elif slot == "healing":
+        if not is_healing(item):
+            raise ValueError("That item is not a healing item.")
+        loadout["healing"] = payload
+    elif slot == "shield":
+        if not is_shield(item):
+            raise ValueError("That item is not a shield.")
+        loadout["shield"] = payload
+    else:
+        raise ValueError("Unknown slot.")
+
+    set_user_loadout(user, loadout)
+    await session.commit()
+    return user, loadout
+
+
+async def get_equipped_loadout(session: AsyncSession, discord_id: int) -> tuple[User, dict]:
+    user = await get_or_create_user(session, discord_id)
+    return user, get_user_loadout(user)
+
 
 
 def default_profile(discord_id: int) -> dict[str, str]:
