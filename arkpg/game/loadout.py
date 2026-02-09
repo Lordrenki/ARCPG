@@ -71,6 +71,41 @@ def shield_reduction(item_payload: dict | None) -> float:
     return SHIELD_DAMAGE_REDUCTION.get(sid, 0.0)
 
 
+
+
+def gadget_utility_from_payload(item_payload: dict | None) -> int:
+    if not item_payload:
+        return 0
+    rarity = str(item_payload.get("rarity") or "common").lower()
+    rarity_mult = RARITY_SCORE.get(rarity, 1.0)
+    value = int(item_payload.get("value", 0) or 0)
+    base = max(4, int(value / 450) + 4)
+
+    source_type_value = str(item_payload.get("source_type") or "").lower()
+    desc = str(item_payload.get("description") or "").lower()
+    sid = str(item_payload.get("source_id") or "").lower()
+
+    bonus = 0
+    if "grenade" in sid or "grenade" in desc or "explosive" in desc:
+        bonus += 5
+    if "mine" in sid or "trap" in desc:
+        bonus += 4
+    if "decoy" in sid or "decoy" in desc:
+        bonus += 3
+    if "smoke" in sid or "smoke" in desc:
+        bonus += 3
+    if "flash" in sid or "stun" in desc or "blind" in desc:
+        bonus += 3
+    if "shield" in desc or source_type_value == "deployable":
+        bonus += 2
+    if "zipline" in sid or "mobility" in desc:
+        bonus += 2
+    if "homing" in desc or "arc" in desc:
+        bonus += 2
+
+    return max(5, int(round((base + bonus) * rarity_mult)))
+
+
 def item_power_from_payload(item_payload: dict, player_stats: dict) -> float:
     rarity = str(item_payload.get("rarity") or "common").lower()
     rarity_mult = RARITY_SCORE.get(rarity, 1.0)
@@ -90,5 +125,6 @@ def as_item_payload(item: Item) -> dict:
         "value": item.base_value,
         "source_id": metadata.get("source_id"),
         "source_type": metadata.get("source_type") or item.type.value,
+        "description": metadata.get("description") or "",
     }
 

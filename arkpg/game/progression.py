@@ -135,6 +135,20 @@ class SeederService:
                 row.base_value = item.value
                 row.metadata_json = metadata
 
+        remove_item_ids = {
+            23, 26, 27, 28, 29, 36, 66, 75, 111, 112, 113, 114,
+            159, 161, 162, 164, 166, 167, 169, 171, 172, 174, 186, 204,
+        }
+        weapon_item_ids = {50, 51, 52, 53, 61, 62, 63, 64}
+
+        rows = (await session.execute(select(Item).where(Item.id.in_(remove_item_ids | weapon_item_ids)))).scalars().all()
+        for row in rows:
+            if row.id in remove_item_ids:
+                await session.delete(row)
+                continue
+            if row.id in weapon_item_ids:
+                row.type = ItemType.WEAPON
+
         await session.commit()
 
 
