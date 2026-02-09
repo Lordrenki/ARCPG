@@ -36,6 +36,12 @@ from arkpg.game.title_catalog import TITLE_RULE_MAP, TITLE_RULES
 RARITY_MULTIPLIER = {"common": 1.0, "uncommon": 1.3, "rare": 1.7, "epic": 2.4, "legendary": 3.2}
 
 
+def as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 class EventBus:
     @staticmethod
     async def emit(session: AsyncSession, user: User, event_type: str, payload: dict) -> list[str]:
@@ -227,7 +233,7 @@ class ActivityService:
 
     async def _check_cd(self, user_id: int, activity: str, seconds: int) -> None:
         last = (await self.session.execute(select(ActivityAttempt).where(and_(ActivityAttempt.user_id == user_id, ActivityAttempt.activity_type == activity)).order_by(ActivityAttempt.created_at.desc()).limit(1))).scalar_one_or_none()
-        if last and (datetime.now(timezone.utc) - last.created_at).total_seconds() < seconds:
+        if last and (datetime.now(timezone.utc) - as_utc(last.created_at)).total_seconds() < seconds:
             raise ValueError(f"{activity} cooldown active.")
 
     async def scavenge(self, user: User) -> ActivityResult:

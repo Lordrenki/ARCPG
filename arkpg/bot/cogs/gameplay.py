@@ -37,6 +37,19 @@ class GameplayCog(commands.Cog):
 
 
 
+
+    def _styled_embed(self, title: str, description: str | None = None, color: int = 0x7A1F2B) -> discord.Embed:
+        embed = discord.Embed(title=title, description=description, color=color)
+        embed.set_footer(text="ARCPG Alpha V.0.5")
+        return embed
+
+    def _seed_note(self, seed: str) -> str:
+        return (
+            f"Seed `{seed}`\n"
+            "This seed is the deterministic random key generated at action start. "
+            "It drives loot/event rolls for that run so outcomes are reproducible for audits."
+        )
+
     @app_commands.command(description="Initialize your raider profile and open the quick-start guide.")
     async def start(self, interaction: discord.Interaction) -> None:
         async with SessionLocal() as session:
@@ -48,28 +61,28 @@ class GameplayCog(commands.Cog):
         profile = normalized_profile(user)
         pages: list[discord.Embed] = []
 
-        page1 = discord.Embed(title="Welcome to ARCPG", color=0x5865F2)
+        page1 = self._styled_embed(title="Welcome to ARCPG", color=0x7A1F2B)
         page1.description = "Your raider record is now initialized."
         page1.add_field(name="Status", value="Existing raider detected." if existing else "New raider created.", inline=False)
         page1.add_field(name="Callsign", value=profile["callsign"], inline=False)
         page1.add_field(name="Next", value="Use the **Next** button for a quick tour.", inline=False)
-        page1.set_footer(text="Page 1/3")
+        page1.set_footer(text="ARCPG Alpha V.0.5 • Page 1/3")
         pages.append(page1)
 
-        page2 = discord.Embed(title="Core Loop", color=0x3498DB)
+        page2 = self._styled_embed(title="Core Loop", color=0x7A1F2B)
         page2.description = "Run missions, recover loot, and improve your build over time."
         page2.add_field(name="1) /deploy", value="Start a run in Residential, Industrial, or ARC Site.", inline=False)
         page2.add_field(name="2) /extract", value="Collect loot and rewards after the timer finishes.", inline=False)
         page2.add_field(name="3) /claim", value="Collect idle XP and credits between active runs.", inline=False)
-        page2.set_footer(text="Page 2/3")
+        page2.set_footer(text="ARCPG Alpha V.0.5 • Page 2/3")
         pages.append(page2)
 
-        page3 = discord.Embed(title="Profile & Social", color=0x9B59B6)
+        page3 = self._styled_embed(title="Profile & Social", color=0x7A1F2B)
         page3.description = "Customize identity and progress with other players."
         page3.add_field(name="Profile", value="Use **/profile** and **/profile_set** to edit callsign and bio.", inline=False)
         page3.add_field(name="Progression", value="Use **/titles_list**, **/titles_inspect**, and **/title_equip**.", inline=False)
         page3.add_field(name="Multiplayer", value="Try **/squad_create**, **/squad_join**, and **/trade**.", inline=False)
-        page3.set_footer(text="Page 3/3")
+        page3.set_footer(text="ARCPG Alpha V.0.5 • Page 3/3")
         pages.append(page3)
 
         view = PaginatedEmbedView(owner_id=interaction.user.id, pages=pages)
@@ -80,11 +93,11 @@ class GameplayCog(commands.Cog):
         async with SessionLocal() as session:
             await SeederService.ensure_seed_data(session)
             user, minutes, xp, credits = await claim_idle(session, self.settings, interaction.user.id)
-        embed = discord.Embed(title="Idle claim complete", color=0x2ECC71)
+        embed = self._styled_embed(title="Idle claim complete")
         embed.add_field(name="Recovered Time", value=f"{minutes} min")
         embed.add_field(name="XP", value=f"+{xp}")
         embed.add_field(name="Credits", value=f"+{credits}")
-        embed.set_footer(text=f"Level {user.level}")
+        embed.set_footer(text=f"ARCPG Alpha V.0.5 • Level {user.level}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Start a deployment.")
@@ -100,7 +113,7 @@ class GameplayCog(commands.Cog):
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
 
-        embed = discord.Embed(title=f"Deployment launched: {zone}", color=0x3498DB)
+        embed = self._styled_embed(title=f"Deployment launched: {zone}")
         embed.description = "You descend through static and dust. Keep your sensors alive and extract in time."
         embed.add_field(name="ETA", value=f"{dep.ends_at:%Y-%m-%d %H:%M UTC}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -115,7 +128,7 @@ class GameplayCog(commands.Cog):
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
         color = RARITY_COLORS.get(outcome["loot"][0]["rarity"], 0x95A5A6) if outcome["loot"] else 0x95A5A6
-        embed = discord.Embed(title=f"Extraction: {outcome['status'].title()}", color=color)
+        embed = self._styled_embed(title=f"Extraction: {outcome['status'].title()}", color=color)
         embed.add_field(name="Event", value=outcome["event"], inline=False)
         embed.add_field(name="XP", value=f"+{outcome['xp']}")
         embed.add_field(name="Credits", value=f"+{outcome['credits']}")
@@ -128,7 +141,7 @@ class GameplayCog(commands.Cog):
         async with SessionLocal() as session:
             user = await get_or_create_user(session, interaction.user.id)
             rows = (await session.execute(select(Inventory, Item).join(Item, Inventory.item_id == Item.id).where(Inventory.user_id == user.id))).all()
-        embed = discord.Embed(title="Field Inventory", color=0x95A5A6)
+        embed = self._styled_embed(title="Field Inventory")
         embed.description = "\n".join(f"• {item.name} x{inv.qty}" for inv, item in rows[:20]) if rows else "Your stash is empty."
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -141,12 +154,12 @@ class GameplayCog(commands.Cog):
         combat = user.stats.get("combat", 10)
         tech = user.stats.get("tech", 10)
         luck = user.stats.get("luck", 10)
-        embed = discord.Embed(title="⚔️ Raider Dossier", color=0x7A1F2B)
+        embed = self._styled_embed(title="⚔️ Raider Dossier")
         embed.description = f"**{profile['callsign']}**\n{title}"
         embed.add_field(name="📊 Attributes", value=f"⚔️ Combat `{combat}` • 🛠️ Tech `{tech}` • 🍀 Luck `{luck}`", inline=False)
         embed.add_field(name="🧭 Progress", value=f"Level `{user.level}` • Scraps `{user.credits}`", inline=False)
         embed.add_field(name="📝 Bio", value=profile["bio"], inline=False)
-        embed.set_footer(text="ARCPG Raider Profile")
+        embed.set_footer(text="ARCPG Alpha V.0.5")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Update your profile fields.")
@@ -156,7 +169,7 @@ class GameplayCog(commands.Cog):
             return
         async with SessionLocal() as session:
             _, profile = await update_user_profile(session, interaction.user.id, callsign=callsign, bio=bio)
-        embed = discord.Embed(title="Raider Profile Updated", color=0x2ECC71)
+        embed = self._styled_embed(title="Raider Profile Updated")
         embed.add_field(name="Callsign", value=profile["callsign"], inline=False)
         embed.add_field(name="Bio", value=profile["bio"], inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -174,7 +187,7 @@ class GameplayCog(commands.Cog):
                 rows = [r for r in rows if r.category.lower() == filter.lower() and (not r.is_hidden or r.id in earned_ids)]
             else:
                 rows = [r for r in rows if not r.is_hidden or r.id in earned_ids]
-        embed = discord.Embed(title="Titles", color=0x5865F2)
+        embed = self._styled_embed(title="Titles")
         embed.description = "\n".join(f"• {t.name} ({t.category}){' ✅' if t.id in earned_ids else ''}" for t in rows[:25]) or "No titles found."
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -191,7 +204,7 @@ class GameplayCog(commands.Cog):
         if title.is_hidden and not earned:
             await interaction.response.send_message("This title is hidden. Keep exploring unusual milestones.", ephemeral=True)
             return
-        embed = discord.Embed(title=title.name, description=title.description, color=0xF1C40F)
+        embed = self._styled_embed(title=title.name, description=title.description)
         embed.add_field(name="Category", value=title.category)
         embed.add_field(name="Rarity", value=title.rarity or "n/a")
         embed.add_field(name="How to Earn", value=title.how_to_earn, inline=False)
@@ -223,7 +236,7 @@ class GameplayCog(commands.Cog):
             stages = (await session.execute(select(ExpeditionStage).where(ExpeditionStage.expedition_id == exp.id).order_by(ExpeditionStage.stage_number.asc()))).scalars().all()
             user = await get_or_create_user(session, interaction.user.id)
             my = (await session.execute(select(ExpeditionContribution).where(and_(ExpeditionContribution.expedition_id == exp.id, ExpeditionContribution.user_id == user.id)))).scalar_one_or_none()
-        embed = discord.Embed(title=f"Expedition Season {exp.season_number}", color=0x1ABC9C)
+        embed = self._styled_embed(title=f"Expedition Season {exp.season_number}")
         embed.add_field(name="Status", value=exp.status.value)
         embed.add_field(name="Departure Window", value=f"{exp.departure_starts_at:%Y-%m-%d} → {exp.departure_ends_at:%Y-%m-%d}", inline=False)
         embed.add_field(name="Your Score", value=str(my.score if my else 0))
@@ -271,7 +284,7 @@ class GameplayCog(commands.Cog):
         if not state:
             await interaction.response.send_message("No expedition rewards earned yet.", ephemeral=True)
             return
-        embed = discord.Embed(title="Expedition Rewards", color=0x16A085)
+        embed = self._styled_embed(title="Expedition Rewards")
         embed.add_field(name="Permanent", value=str(state.permanent_rewards or {}), inline=False)
         embed.add_field(name="Temporary", value=str(state.temp_buffs or {}), inline=False)
         embed.add_field(name="Catch-up", value=str(state.catchup_state or {}), inline=False)
@@ -331,7 +344,7 @@ class GameplayCog(commands.Cog):
             user = await get_or_create_user(session, interaction.user.id)
             await QuestService(session).ensure_track(user)
             rows = (await session.execute(select(UserQuest, Quest).join(Quest, UserQuest.quest_id == Quest.id).where(and_(UserQuest.user_id == user.id, UserQuest.status == QuestStatus.ACTIVE)).order_by(Quest.chapter.asc(), Quest.order_index.asc()))).all()
-        embed = discord.Embed(title="Active Quests", color=0x7289DA)
+        embed = self._styled_embed(title="Active Quests")
         embed.description = "\n".join(f"• Ch{q.chapter}.{q.order_index} {q.name} — {uq.progress or {'current': 0, 'target': '?'}}" for uq, q in rows) or "No active quests."
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -346,7 +359,7 @@ class GameplayCog(commands.Cog):
             except ValueError as exc:
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
-        await interaction.response.send_message(f"{result.message} Seed `{result.seed}`", ephemeral=True)
+        await interaction.response.send_message(f"{result.message}\n\n{self._seed_note(result.seed)}", ephemeral=True)
 
     @app_commands.command(description="Convert recyclables into scraps/materials.")
     async def salvage(self, interaction: discord.Interaction) -> None:
@@ -363,7 +376,7 @@ class GameplayCog(commands.Cog):
             except ValueError as exc:
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
-        await interaction.response.send_message(f"{result.message} Seed `{result.seed}`", ephemeral=True)
+        await interaction.response.send_message(f"{result.message}\n\n{self._seed_note(result.seed)}", ephemeral=True)
 
     @app_commands.command(description="Take a timed courier job with risk/reward.")
     async def courier(self, interaction: discord.Interaction, stake: int) -> None:
@@ -379,7 +392,7 @@ class GameplayCog(commands.Cog):
             except ValueError as exc:
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
-        await interaction.response.send_message(f"{result.message} Net `{result.credits}` Seed `{result.seed}`", ephemeral=True)
+        await interaction.response.send_message(f"{result.message} Net `{result.credits}`\n\n{self._seed_note(result.seed)}", ephemeral=True)
 
     @app_commands.command(description="Create a squad.")
     async def squad_create(self, interaction: discord.Interaction, name: str) -> None:
@@ -427,11 +440,46 @@ class GameplayCog(commands.Cog):
         await interaction.response.send_message(f"Duel resolved. Winner: {winner}")
 
     @app_commands.command(description="Create a pending trade offer.")
-    async def trade(self, interaction: discord.Interaction, target: discord.Member, offered_credits: int, requested_credits: int) -> None:
+    async def trade(
+        self,
+        interaction: discord.Interaction,
+        target: discord.Member,
+        offered_credits: int = 0,
+        requested_credits: int = 0,
+        offered_item_id: int | None = None,
+        offered_item_qty: int = 0,
+        requested_item_id: int | None = None,
+        requested_item_qty: int = 0,
+    ) -> None:
+        if target.bot or target.id == interaction.user.id:
+            await interaction.response.send_message("Choose another player as trade target.", ephemeral=True)
+            return
+        if min(offered_credits, requested_credits, offered_item_qty, requested_item_qty) < 0:
+            await interaction.response.send_message("Trade values cannot be negative.", ephemeral=True)
+            return
+        if offered_credits == requested_credits == 0 and offered_item_qty == requested_item_qty == 0:
+            await interaction.response.send_message("Trade must include credits or items.", ephemeral=True)
+            return
+        if (offered_item_id is None) != (offered_item_qty == 0):
+            await interaction.response.send_message("Set both offered item id and qty, or leave both empty.", ephemeral=True)
+            return
+        if (requested_item_id is None) != (requested_item_qty == 0):
+            await interaction.response.send_message("Set both requested item id and qty, or leave both empty.", ephemeral=True)
+            return
+
+        offered = {"credits": offered_credits}
+        requested = {"credits": requested_credits}
+        if offered_item_id is not None and offered_item_qty > 0:
+            offered["item_id"] = offered_item_id
+            offered["item_qty"] = offered_item_qty
+        if requested_item_id is not None and requested_item_qty > 0:
+            requested["item_id"] = requested_item_id
+            requested["item_qty"] = requested_item_qty
+
         async with SessionLocal() as session:
             src = await get_or_create_user(session, interaction.user.id)
             dst = await get_or_create_user(session, target.id)
-            trade_row = Trade(from_user=src.id, to_user=dst.id, offered={"credits": offered_credits}, requested={"credits": requested_credits}, status=TradeStatus.PENDING)
+            trade_row = Trade(from_user=src.id, to_user=dst.id, offered=offered, requested=requested, status=TradeStatus.PENDING)
             session.add(trade_row)
             await session.commit()
         await interaction.response.send_message(f"Trade #{trade_row.id} offered to {target.mention}.", ephemeral=True)

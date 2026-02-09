@@ -23,6 +23,12 @@ from arkpg.game.economy import compute_idle_rewards, level_from_xp
 from arkpg.game.progression import EventBus
 
 
+def as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 async def get_or_create_user(session: AsyncSession, discord_id: int) -> User:
     result = await session.execute(select(User).where(User.discord_id == discord_id))
     user = result.scalar_one_or_none()
@@ -81,7 +87,7 @@ async def extract_deployment(session: AsyncSession, discord_id: int, auto: bool 
         raise ValueError("No active deployment.")
 
     now = datetime.now(timezone.utc)
-    if now < dep.ends_at:
+    if now < as_utc(dep.ends_at):
         raise ValueError("Deployment is still running.")
 
     resolution = resolve_deployment(dep.seeded_rng, dep.zone, user.level, extract_late=auto)
@@ -120,6 +126,57 @@ async def atomic_trade_confirm(session: AsyncSession, trade_id: int) -> Trade:
     trade = await session.get(Trade, trade_id, with_for_update=True)
     if not trade or trade.status != TradeStatus.PENDING:
         raise ValueError("Trade unavailable")
+    src = await session.get(User, trade.from_user, with_for_update=True)
+    dst = await session.get(User, trade.to_user, with_for_update=True)
+    if not src or not dst:
+        raise ValueError("Trade users unavailable")
+
+    offered_credits = int((trade.offered or {}).get("credits", 0))
+    requested_credits = int((trade.requested or {}).get("credits", 0))
+
+    if src.credits < offered_credits:
+        raise ValueError("Offerer does not have enough credits.")
+    if dst.credits < requested_credits:
+        raise ValueError("Target does not have enough credits.")
+
+    src.credits -= offered_credits
+    dst.credits += offered_credits
+    dst.credits -= requested_credits
+    src.credits += requested_credits
+
+    async def transfer_item(from_user_id: int, to_user_id: int, payload: dict, label: str) -> None:
+        item_id = payload.get("item_id")
+        qty = int(payload.get("item_qty", 0) or 0)
+        if not item_id or qty <= 0:
+            return
+
+        inv_q = await session.execute(
+            select(Inventory).where(
+                and_(Inventory.user_id == from_user_id, Inventory.item_id == int(item_id), Inventory.weapon_level.is_(None))
+            )
+        )
+        source_inv = inv_q.scalar_one_or_none()
+        if source_inv is None or source_inv.qty < qty:
+            raise ValueError(f"{label} does not have enough of item {item_id}.")
+
+        source_inv.qty -= qty
+        if source_inv.qty <= 0:
+            await session.delete(source_inv)
+
+        dst_q = await session.execute(
+            select(Inventory).where(
+                and_(Inventory.user_id == to_user_id, Inventory.item_id == int(item_id), Inventory.weapon_level.is_(None))
+            )
+        )
+        dst_inv = dst_q.scalar_one_or_none()
+        if dst_inv:
+            dst_inv.qty += qty
+        else:
+            session.add(Inventory(user_id=to_user_id, item_id=int(item_id), qty=qty))
+
+    await transfer_item(src.id, dst.id, trade.offered or {}, "Offerer")
+    await transfer_item(dst.id, src.id, trade.requested or {}, "Target")
+
     trade.status = TradeStatus.CONFIRMED
     await session.commit()
     return trade
