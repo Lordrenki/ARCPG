@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import random
 from typing import Literal
@@ -58,6 +58,7 @@ from arkpg.game.service import (
 ADMIN_ROLE_ID = 927355923364720651
 ADMIN_GUILD_ID = 927355923314380901
 ADMIN_PROFILE_BACKGROUND_PATH = Path(__file__).resolve().parents[2] / "assets" / "admin_staff_team.png"
+DUEL_COOLDOWN_SECONDS = 300
 
 
 class GameplayCog(commands.Cog):
@@ -136,14 +137,34 @@ class GameplayCog(commands.Cog):
             + shield_bonus
         )
 
+    @staticmethod
+    def _is_down(user: User) -> bool:
+        stats = user.stats or {}
+        return int(stats.get("health", stats.get("max_health", 100)) or 0) <= 0
+
+    async def _block_if_down(self, interaction: discord.Interaction, session, *, action_label: str) -> bool:
+        user = await get_or_create_user(session, interaction.user.id)
+        if self._is_down(user):
+            await interaction.response.send_message(
+                f"You are at 0 HP and cannot {action_label}. Use /heal to recover.",
+                ephemeral=True,
+            )
+            return True
+        return False
+
     @app_commands.command(description="Browse all player commands.")
     async def help(self, interaction: discord.Interaction) -> None:
         tree_commands = interaction.client.tree.get_commands()
-        commands_list = [
-            cmd
-            for cmd in self._flatten_commands(tree_commands)
-            if not cmd.name.startswith("admin")
-        ]
+        commands_list = []
+        for cmd in self._flatten_commands(tree_commands):
+            root_name = cmd.qualified_name.split(" ")[0].lower()
+            if root_name in {"config", "wipe", "anti_exploit_log", "give", "items"}:
+                continue
+            if cmd.name.startswith("admin"):
+                continue
+            if (cmd.description or "").lower().startswith("admin:"):
+                continue
+            commands_list.append(cmd)
         entries = sorted(
             [(f"/{cmd.qualified_name}", cmd.description or "No description available.") for cmd in commands_list],
             key=lambda x: x[0],
@@ -162,7 +183,7 @@ class GameplayCog(commands.Cog):
             pages.append(self._styled_embed(title="ARCPG Command Guide", description="No commands available."))
 
         view = PaginatedEmbedView(owner_id=interaction.user.id, pages=pages)
-        await interaction.response.send_message(embed=view.current_embed(), view=view)
+        await interaction.response.send_message(embed=view.current_embed(), view=view, ephemeral=True)
 
     @app_commands.command(description="Initialize your raider profile and open the quick-start guide.")
     async def start(self, interaction: discord.Interaction) -> None:
@@ -223,6 +244,8 @@ class GameplayCog(commands.Cog):
             return
         async with SessionLocal() as session:
             await SeederService.ensure_seed_data(session)
+            if await self._block_if_down(interaction, session, action_label="start deployments"):
+                return
             try:
                 dep = await start_deployment(session, interaction.user.id, zone)
             except ValueError as exc:
@@ -706,6 +729,8 @@ class GameplayCog(commands.Cog):
     @app_commands.command(description="Run a short scavenge for small loot.")
     async def scavenge(self, interaction: discord.Interaction) -> None:
         async with SessionLocal() as session:
+            if await self._block_if_down(interaction, session, action_label="scavenge"):
+                return
             user = await get_or_create_user(session, interaction.user.id)
             try:
                 result = await ActivityService(session).scavenge(user)
@@ -736,6 +761,8 @@ class GameplayCog(commands.Cog):
     @app_commands.command(description="Take a timed courier job with risk/reward.")
     async def courier(self, interaction: discord.Interaction, stake: int) -> None:
         async with SessionLocal() as session:
+            if await self._block_if_down(interaction, session, action_label="run courier jobs"):
+                return
             user = await get_or_create_user(session, interaction.user.id)
             try:
                 result = await ActivityService(session).courier(user, stake)
@@ -841,6 +868,57 @@ class GameplayCog(commands.Cog):
         embed.add_field(name="Materials Used", value="\n".join(f"• {m['name']} x{m['qty']}" for m in result["materials"]), inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    @app_commands.command(description="Use a healing item from your inventory to restore HP.")
+    async def heal(self, interaction: discord.Interaction, item_id: int, qty: app_commands.Range[int, 1, 10] = 1) -> None:
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, interaction.user.id)
+            stats = dict(user.stats or {})
+            max_hp = int(stats.get("max_health", 100) or 100)
+            hp = int(stats.get("health", max_hp) if stats.get("health") is not None else max_hp)
+            if hp >= max_hp:
+                await interaction.response.send_message("Your HP is already full.", ephemeral=True)
+                return
+
+            row = (
+                await session.execute(
+                    select(Inventory, Item).join(Item, Inventory.item_id == Item.id).where(
+                        and_(Inventory.user_id == user.id, Inventory.item_id == item_id, Inventory.weapon_level.is_(None))
+                    )
+                )
+            ).first()
+            if row is None:
+                await interaction.response.send_message("You do not own that item.", ephemeral=True)
+                return
+
+            inv, item = row
+            if not is_healing(item):
+                await interaction.response.send_message("That item is not a healing item.", ephemeral=True)
+                return
+            if inv.qty < qty:
+                await interaction.response.send_message("Not enough quantity in inventory.", ephemeral=True)
+                return
+
+            sid = str((item.metadata_json or {}).get("source_id") or "").lower()
+            per_item = HEALING_ITEM_FLAT.get(sid, 35)
+            healed = per_item * qty
+            new_hp = min(max_hp, hp + healed)
+            applied = new_hp - hp
+
+            inv.qty -= qty
+            if inv.qty <= 0:
+                await session.delete(inv)
+
+            stats["max_health"] = max_hp
+            stats["health"] = new_hp
+            user.stats = stats
+            await session.commit()
+
+        embed = self._styled_embed(title="Healing Applied")
+        embed.add_field(name="Item", value=f"{item.name} x{qty}", inline=True)
+        embed.add_field(name="HP Restored", value=str(applied), inline=True)
+        embed.add_field(name="Current HP", value=f"{new_hp}/{max_hp}", inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     @app_commands.command(description="Create a squad.")
     async def squad_create(self, interaction: discord.Interaction, name: str) -> None:
         async with SessionLocal() as session:
@@ -873,7 +951,22 @@ class GameplayCog(commands.Cog):
             return
         async with SessionLocal() as session:
             me = await get_or_create_user(session, interaction.user.id)
+            if self._is_down(me):
+                await interaction.response.send_message("You are at 0 HP and cannot duel. Use /heal to recover.", ephemeral=True)
+                return
+            duel_cd = (me.progression_json or {}).get("duel_cd_until")
+            if duel_cd:
+                duel_ready = datetime.fromisoformat(str(duel_cd))
+                if duel_ready.tzinfo is None:
+                    duel_ready = duel_ready.replace(tzinfo=timezone.utc)
+                if duel_ready > datetime.now(timezone.utc):
+                    await interaction.response.send_message(f"Duel cooldown active. Try again {self._relative_time(duel_ready)}.", ephemeral=True)
+                    return
+
             them = await get_or_create_user(session, opponent.id)
+            if self._is_down(them):
+                await interaction.response.send_message("That opponent is at 0 HP and cannot duel right now.", ephemeral=True)
+                return
             if abs(me.level - them.level) > 8:
                 await interaction.response.send_message("Level difference too large. Find a closer rival.", ephemeral=True)
                 return
@@ -902,8 +995,12 @@ class GameplayCog(commands.Cog):
             max_hp = int(loser_stats.get("max_health", 100) or 100)
             loser_hp = int(loser_stats.get("health", max_hp) or max_hp)
             hp_penalty = random.randint(12, 22)
-            loser_stats["health"] = max(1, loser_hp - hp_penalty)
+            loser_stats["health"] = max(0, loser_hp - hp_penalty)
             loser_user.stats = loser_stats
+            now = datetime.now(timezone.utc)
+            me_prog = dict(me.progression_json or {})
+            me_prog["duel_cd_until"] = (now + timedelta(seconds=DUEL_COOLDOWN_SECONDS)).isoformat()
+            me.progression_json = me_prog
 
             await session.commit()
 
