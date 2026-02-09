@@ -28,6 +28,7 @@ from arkpg.db.models import (
     UserQuest,
     UserTitle,
 )
+from arkpg.game.economy import level_from_xp
 from arkpg.game.items import infer_rarity, load_items
 from arkpg.game.quest_catalog import QUESTS
 from arkpg.game.title_catalog import TITLE_RULE_MAP, TITLE_RULES
@@ -199,6 +200,7 @@ class QuestService:
                 rewards = q.rewards or {}
                 user.credits += int(rewards.get("credits", 0))
                 user.xp += int(rewards.get("xp", 0))
+                user.level = level_from_xp(user.xp)
                 if rewards.get("perk"):
                     pr = dict(user.progression_json or {})
                     for k, v in rewards["perk"].items():
