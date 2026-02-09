@@ -1,11 +1,12 @@
 from datetime import datetime, timedelta, timezone
+import asyncio
 from pathlib import Path
 import random
 from typing import Literal
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from sqlalchemy import and_, select
 
 from arkpg.bot.profile_card import render_profile_card
@@ -29,6 +30,7 @@ from arkpg.db.models import (
     TradeStatus,
     User,
     UserExpeditionState,
+    GameConfig,
     UserQuest,
     UserTitle,
 )
@@ -39,6 +41,7 @@ from arkpg.game.progression import ActivityService, EventBus, ExpeditionService,
 from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
 from arkpg.game.economy import level_from_xp
 from arkpg.game.loadout import HEALING_ITEM_FLAT, SHIELD_DAMAGE_REDUCTION, gadget_utility_from_payload, is_gadget, is_healing, is_shield, is_weapon, source_type
+from arkpg.game.bosses import FLAVOR_CRITS, FLAVOR_DAMAGE, FLAVOR_SUPPORT, random_boss, weighted_damage_roll
 from arkpg.game.service import (
     atomic_trade_confirm,
     claim_idle,
@@ -183,12 +186,36 @@ class TradeOfferView(discord.ui.View):
         await interaction.response.edit_message(content=f"Trade #{self.trade_id} denied.", view=None)
 
 
+
+
+class BossSignupView(discord.ui.View):
+    def __init__(self, cog: "GameplayCog", guild_id: int, spawn_id: str):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.guild_id = guild_id
+        self.spawn_id = spawn_id
+
+    @discord.ui.button(label="Participate", style=discord.ButtonStyle.success)
+    async def participate(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        msg = await self.cog.add_boss_participant(self.guild_id, self.spawn_id, interaction.user.id)
+        await interaction.response.send_message(msg, ephemeral=True)
+
+    @discord.ui.button(label="Withdraw", style=discord.ButtonStyle.secondary)
+    async def withdraw(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        msg = await self.cog.remove_boss_participant(self.guild_id, self.spawn_id, interaction.user.id)
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
 class GameplayCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.settings = get_settings()
+        self._boss_state: dict[int, dict] = {}
+        self._boss_rng = random.Random()
+        self.boss_scheduler.start()
 
-
+    def cog_unload(self) -> None:
+        self.boss_scheduler.cancel()
 
 
     def _is_super_admin(self, interaction: discord.Interaction) -> bool:
@@ -274,6 +301,148 @@ class GameplayCog(commands.Cog):
             return True
         return False
 
+    async def _ensure_boss_schedule(self, guild_id: int) -> dict:
+        state = self._boss_state.setdefault(guild_id, {})
+        if not state.get("next_spawn"):
+            state["next_spawn"] = datetime.now(timezone.utc) + timedelta(minutes=self._boss_rng.randint(30, 60))
+            state["warned"] = False
+            state["participants"] = set()
+            state["spawn_id"] = f"{guild_id}-{int(state['next_spawn'].timestamp())}"
+        return state
+
+    async def add_boss_participant(self, guild_id: int, spawn_id: str, discord_id: int) -> str:
+        state = self._boss_state.get(guild_id)
+        if not state or state.get("spawn_id") != spawn_id:
+            return "That boss signup is no longer active."
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, discord_id)
+            loadout = (user.stats or {}).get("loadout", {})
+            if not [w for w in (loadout.get("weapons") or []) if w]:
+                return "You need a weapon equipped in /loadout to join this boss fight."
+        state.setdefault("participants", set()).add(discord_id)
+        return "You are locked in for the boss fight."
+
+    async def remove_boss_participant(self, guild_id: int, spawn_id: str, discord_id: int) -> str:
+        state = self._boss_state.get(guild_id)
+        if not state or state.get("spawn_id") != spawn_id:
+            return "That boss signup is no longer active."
+        state.setdefault("participants", set()).discard(discord_id)
+        return "You withdrew from this boss fight."
+
+    async def _run_boss_fight(self, guild: discord.Guild, channel: discord.TextChannel, state: dict) -> None:
+        participants = list(state.get("participants") or set())
+        if not participants:
+            await channel.send("No raiders committed. The boss signal fades for now.")
+            return
+        spawn = random_boss(self._boss_rng)
+        hp = spawn.max_hp
+        damages: dict[int, int] = {uid: 0 for uid in participants}
+        alive: set[int] = set()
+        ratings: dict[int, float] = {}
+        async with SessionLocal() as session:
+            for uid in participants:
+                user = await get_or_create_user(session, uid)
+                loadout = (user.stats or {}).get("loadout", {})
+                if not [w for w in (loadout.get("weapons") or []) if w]:
+                    continue
+                if self._is_down(user):
+                    continue
+                alive.add(uid)
+                ratings[uid] = max(1.0, self._combat_rating(user, loadout))
+            await session.commit()
+        if not alive:
+            await channel.send("All queued raiders are down or unarmed. The boss leaves uncontested.")
+            return
+        await channel.send(f"⚠️ **{spawn.name}** engaged ({spawn.archetype})! HP: **{hp}**")
+        while hp > 0 and alive:
+            await asyncio.sleep(30)
+            burst = 0
+            hitter = self._boss_rng.choice(list(alive))
+            dealt = weighted_damage_roll(self._boss_rng, ratings[hitter])
+            damages[hitter] += dealt
+            burst += dealt
+            if len(alive) > 1:
+                for uid in self._boss_rng.sample(list(alive), k=min(2, len(alive))):
+                    chip = max(8, weighted_damage_roll(self._boss_rng, ratings[uid]) // 4)
+                    damages[uid] += chip
+                    burst += chip
+            hp = max(0, hp - burst)
+            crit_line = self._boss_rng.choice(FLAVOR_CRITS).format(user=f"<@{hitter}>", boss=spawn.name)
+            await channel.send(f"{crit_line}\nBoss HP: **{hp}/{spawn.max_hp}**")
+            struck = self._boss_rng.choice(list(alive))
+            harm = self._boss_rng.randint(8, 28)
+            async with SessionLocal() as session:
+                player = await get_or_create_user(session, struck)
+                stats = dict(player.stats or {})
+                cur = int(stats.get("health", stats.get("max_health", 100)) or 0)
+                stats["health"] = max(0, cur - harm)
+                player.stats = stats
+                if stats["health"] <= 0:
+                    alive.discard(struck)
+                    inv_rows = (await session.execute(select(Inventory).where(Inventory.user_id == player.id).limit(1))).scalars().all()
+                    if inv_rows and self._boss_rng.random() < 0.35:
+                        inv_rows[0].qty = max(0, inv_rows[0].qty - 1)
+                        if inv_rows[0].qty == 0:
+                            await session.delete(inv_rows[0])
+                await session.commit()
+            await channel.send(self._boss_rng.choice(FLAVOR_DAMAGE).format(user=f"<@{struck}>", damage=harm))
+            if alive:
+                support_user = self._boss_rng.choice(list(alive))
+                await channel.send(self._boss_rng.choice(FLAVOR_SUPPORT).format(user=f"<@{support_user}>"))
+
+        if hp > 0 and not alive:
+            await channel.send("All raiders went down. The boss withdraws into the storm.")
+            return
+
+        winner_discord_id = max(damages, key=damages.get)
+        async with SessionLocal() as session:
+            winner = await get_or_create_user(session, winner_discord_id)
+            pool = (await session.execute(select(Item).where(Item.base_value >= 1200).order_by(Item.base_value.desc()).limit(20))).scalars().all()
+            if not pool:
+                pool = (await session.execute(select(Item).order_by(Item.base_value.desc()).limit(20))).scalars().all()
+            reward = self._boss_rng.choice(pool) if pool else None
+            if reward:
+                inv = (await session.execute(select(Inventory).where(and_(Inventory.user_id == winner.id, Inventory.item_id == reward.id, Inventory.weapon_level.is_(None))))).scalar_one_or_none()
+                if inv:
+                    inv.qty += 1
+                else:
+                    session.add(Inventory(user_id=winner.id, item_id=reward.id, qty=1))
+            await session.commit()
+        await channel.send(f"✅ **{spawn.name}** has been defeated. MVP: <@{winner_discord_id}> ({damages[winner_discord_id]} damage)." + (f" Reward: **{reward.name}**" if reward else ""))
+
+    @tasks.loop(seconds=60)
+    async def boss_scheduler(self) -> None:
+        if not self.bot.guilds:
+            return
+        now = datetime.now(timezone.utc)
+        for guild in self.bot.guilds:
+            async with SessionLocal() as session:
+                cfg = (await session.execute(select(GameConfig).where(GameConfig.guild_id == guild.id))).scalar_one_or_none()
+            if cfg is None or cfg.boss_channel_id is None:
+                continue
+            channel = guild.get_channel(cfg.boss_channel_id)
+            if not isinstance(channel, discord.TextChannel):
+                continue
+            state = await self._ensure_boss_schedule(guild.id)
+            spawn_at = state["next_spawn"]
+            if not state.get("warned") and now >= spawn_at - timedelta(minutes=5):
+                state["warned"] = True
+                state["participants"] = set()
+                view = BossSignupView(self, guild.id, state["spawn_id"])
+                await channel.send("Boss contact in ~5 minutes. Click below to participate.", view=view)
+            if now >= spawn_at:
+                await self._run_boss_fight(guild, channel, state)
+                self._boss_state[guild.id] = {
+                    "next_spawn": now + timedelta(minutes=self._boss_rng.randint(30, 60)),
+                    "warned": False,
+                    "participants": set(),
+                    "spawn_id": f"{guild.id}-{int(now.timestamp())}",
+                }
+
+    @boss_scheduler.before_loop
+    async def _before_boss_scheduler(self) -> None:
+        await self.bot.wait_until_ready()
+
     @app_commands.command(description="Browse all player commands.")
     async def help(self, interaction: discord.Interaction) -> None:
         tree_commands = interaction.client.tree.get_commands()
@@ -306,6 +475,26 @@ class GameplayCog(commands.Cog):
 
         view = PaginatedEmbedView(owner_id=interaction.user.id, pages=pages)
         await interaction.response.send_message(embed=view.current_embed(), view=view, ephemeral=True)
+
+    @app_commands.command(description="Set the boss spawn channel for this server.")
+    @app_commands.default_permissions(manage_guild=True)
+    async def set_boss_channel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message("Guild-only command.", ephemeral=True)
+            return
+        member = interaction.user if isinstance(interaction.user, discord.Member) else interaction.guild.get_member(interaction.user.id)
+        if not isinstance(member, discord.Member) or not member.guild_permissions.manage_guild:
+            await interaction.response.send_message("You need Manage Server permission to configure boss channels.", ephemeral=True)
+            return
+        async with SessionLocal() as session:
+            cfg = (await session.execute(select(GameConfig).where(GameConfig.guild_id == interaction.guild.id))).scalar_one_or_none()
+            if cfg is None:
+                cfg = GameConfig(guild_id=interaction.guild.id)
+                session.add(cfg)
+            cfg.boss_channel_id = channel.id
+            await session.commit()
+        self._boss_state.pop(interaction.guild.id, None)
+        await interaction.response.send_message(f"Boss encounters will now announce in {channel.mention}.", ephemeral=True)
 
     @app_commands.command(description="Initialize your raider profile and open the quick-start guide.")
     async def start(self, interaction: discord.Interaction) -> None:

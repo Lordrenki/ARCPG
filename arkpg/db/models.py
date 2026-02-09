@@ -172,6 +172,7 @@ class GameConfig(Base):
     allowed_zones: Mapped[list[str]] = mapped_column(JSON, default=lambda: ["Residential", "Industrial", "ARC Site"])
     economy_multiplier: Mapped[float] = mapped_column(Numeric(6, 2), default=1.0)
     monetization_enabled: Mapped[bool] = mapped_column(default=True)
+    boss_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class Title(Base):
