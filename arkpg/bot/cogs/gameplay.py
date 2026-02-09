@@ -735,8 +735,10 @@ class GameplayCog(commands.Cog):
         combat = user.stats.get("combat", 10)
         tech = user.stats.get("tech", 10)
         luck = user.stats.get("luck", 10)
-        health = int(user.stats.get("health", 100) or 100)
-        max_health = int(user.stats.get("max_health", 100) or 100)
+        health_raw = user.stats.get("health")
+        max_health_raw = user.stats.get("max_health")
+        health = int(health_raw if health_raw is not None else 100)
+        max_health = int(max_health_raw if max_health_raw is not None else 100)
         weapons = [w.get("name", "Unknown") for w in (loadout.get("weapons") or []) if w]
         gadget = (loadout.get("gadget") or {}).get("name", "None")
         healing = (loadout.get("healing") or {}).get("name", "None")
