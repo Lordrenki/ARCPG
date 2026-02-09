@@ -65,10 +65,17 @@ class User(Base):
     progression_json: Mapped[dict] = mapped_column("progression", JSON, default=dict)
     stats: Mapped[dict] = mapped_column(JSON, default=lambda: {
         "health": 100,
+        "max_health": 100,
         "stamina": 100,
         "luck": 10,
         "tech": 10,
         "combat": 10,
+        "loadout": {
+            "weapons": [],
+            "gadget": None,
+            "healing": None,
+            "shield": None,
+        },
         "raid_clears": 0,
         "legendary_finds": 0,
         "supporter": False,

@@ -106,7 +106,7 @@ class SeederService:
                         type=SeederService._normalize_type(item.type),
                         rarity=SeederService._normalize_rarity(item.rarity, item.value),
                         base_value=item.value,
-                        metadata_json={"foundIn": list(item.found_in), "icon": item.icon, "description": item.description, "source_id": item.id},
+                        metadata_json={"foundIn": list(item.found_in), "icon": item.icon, "description": item.description, "source_id": item.id, "source_type": item.type},
                     )
                 )
 

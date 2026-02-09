@@ -27,7 +27,17 @@ from arkpg.db.models import (
 from arkpg.db.session import SessionLocal
 from arkpg.game.constants import RARITY_COLORS, ZONE_CONFIG
 from arkpg.game.progression import ActivityService, EventBus, ExpeditionService, QuestService, SeederService, TitleService
-from arkpg.game.service import atomic_trade_confirm, claim_idle, extract_deployment, get_or_create_user, normalized_profile, start_deployment, update_user_profile
+from arkpg.game.service import (
+    atomic_trade_confirm,
+    claim_idle,
+    equip_loadout_item,
+    extract_deployment,
+    get_equipped_loadout,
+    get_or_create_user,
+    normalized_profile,
+    start_deployment,
+    update_user_profile,
+)
 
 
 class GameplayCog(commands.Cog):
@@ -134,6 +144,9 @@ class GameplayCog(commands.Cog):
         embed.add_field(name="Credits", value=f"+{outcome['credits']}")
         loot_text = "\n".join(f"• {x['name']} x{x['qty']}" for x in outcome["loot"]) if outcome["loot"] else "No recovered loot"
         embed.add_field(name="Recovered", value=loot_text, inline=False)
+        survivability = outcome.get("survivability") or {}
+        if survivability:
+            embed.add_field(name="Damage", value=f"Taken {survivability.get('effective_damage', 0)} • HP {survivability.get('health_after', '?')}" + (" • Auto-heal used" if survivability.get("healing_used") else ""), inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="View your inventory.")
@@ -143,6 +156,45 @@ class GameplayCog(commands.Cog):
             rows = (await session.execute(select(Inventory, Item).join(Item, Inventory.item_id == Item.id).where(Inventory.user_id == user.id))).all()
         embed = self._styled_embed(title="Field Inventory")
         embed.description = "\n".join(f"• {item.name} x{inv.qty}" for inv, item in rows[:20]) if rows else "Your stash is empty."
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(description="View your equipped combat loadout.")
+    async def loadout(self, interaction: discord.Interaction) -> None:
+        async with SessionLocal() as session:
+            _user, loadout = await get_equipped_loadout(session, interaction.user.id)
+
+        weapons = [w for w in (loadout.get("weapons") or []) if w]
+        gadget = loadout.get("gadget")
+        healing = loadout.get("healing")
+        shield = loadout.get("shield")
+
+        embed = self._styled_embed(title="Combat Loadout")
+        embed.add_field(name="Weapons", value="\n".join(f"• {w['name']}" for w in weapons) or "None equipped", inline=False)
+        embed.add_field(name="Gadget / Throwable", value=(gadget or {}).get("name", "None equipped"), inline=True)
+        embed.add_field(name="Healing", value=(healing or {}).get("name", "None equipped"), inline=True)
+        embed.add_field(name="Shield", value=(shield or {}).get("name", "None equipped"), inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(description="Equip an item from inventory to a loadout slot.")
+    async def equip(self, interaction: discord.Interaction, item_id: int, slot: str, weapon_slot: int | None = None) -> None:
+        normalized_slot = slot.strip().lower()
+        if normalized_slot not in {"weapon", "gadget", "healing", "shield"}:
+            await interaction.response.send_message("Slot must be weapon, gadget, healing, or shield.", ephemeral=True)
+            return
+
+        async with SessionLocal() as session:
+            try:
+                _user, loadout = await equip_loadout_item(session, interaction.user.id, item_id=item_id, slot=normalized_slot, weapon_index=weapon_slot)
+            except ValueError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
+
+        weapons = [w for w in (loadout.get("weapons") or []) if w]
+        embed = self._styled_embed(title="Loadout Updated")
+        embed.add_field(name="Weapons", value="\n".join(f"• {w['name']}" for w in weapons) or "None equipped", inline=False)
+        embed.add_field(name="Gadget", value=(loadout.get("gadget") or {}).get("name", "None"), inline=True)
+        embed.add_field(name="Healing", value=(loadout.get("healing") or {}).get("name", "None"), inline=True)
+        embed.add_field(name="Shield", value=(loadout.get("shield") or {}).get("name", "None"), inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="View your customizable profile.")
