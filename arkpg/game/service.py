@@ -22,7 +22,7 @@ from arkpg.game.deployments import deployment_end, make_seed, resolve_deployment
 from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
 from arkpg.game.economy import compute_idle_rewards, level_from_xp, scale_stats_with_level
 from arkpg.game.profile_backgrounds import DEFAULT_BACKGROUND_ID, normalize_collected_background_ids
-from arkpg.game.loadout import as_item_payload, healing_amount, item_power_from_payload, shield_reduction
+from arkpg.game.loadout import as_item_payload, gadget_utility_from_payload, healing_amount, item_power_from_payload, shield_reduction
 from arkpg.game.progression import EventBus
 
 
@@ -262,7 +262,7 @@ def compute_loadout_power(user: User) -> dict:
     loadout = get_user_loadout(user)
     stats = user.stats if isinstance(user.stats, dict) else {}
     weapon_power = sum(item_power_from_payload(w, stats) for w in (loadout.get("weapons") or []))
-    gadget_power = item_power_from_payload(loadout["gadget"], stats) * 0.45 if loadout.get("gadget") else 0.0
+    gadget_power = float(gadget_utility_from_payload(loadout.get("gadget"))) if loadout.get("gadget") else 0.0
     return {
         "weapon_power": weapon_power,
         "gadget_power": gadget_power,

@@ -38,7 +38,7 @@ from arkpg.game.profile_backgrounds import PROFILE_BACKGROUNDS, get_background, 
 from arkpg.game.progression import ActivityService, EventBus, ExpeditionService, QuestService, SeederService, TitleService
 from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
 from arkpg.game.economy import level_from_xp
-from arkpg.game.loadout import HEALING_ITEM_FLAT, SHIELD_DAMAGE_REDUCTION, is_gadget, is_healing, is_shield, is_weapon, source_type
+from arkpg.game.loadout import HEALING_ITEM_FLAT, SHIELD_DAMAGE_REDUCTION, gadget_utility_from_payload, is_gadget, is_healing, is_shield, is_weapon, source_type
 from arkpg.game.service import (
     atomic_trade_confirm,
     claim_idle,
@@ -468,6 +468,42 @@ class GameplayCog(commands.Cog):
                 break
         return picks
 
+    async def inventory_item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[int]]:
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, interaction.user.id)
+            rows = (await session.execute(
+                select(Inventory, Item)
+                .join(Item, Inventory.item_id == Item.id)
+                .where(and_(Inventory.user_id == user.id, Inventory.weapon_level.is_(None), Inventory.qty > 0))
+                .order_by(Item.name.asc())
+            )).all()
+
+        needle = current.strip().lower()
+        picks: list[app_commands.Choice[int]] = []
+        for inv, item in rows:
+            if needle and needle not in item.name.lower() and needle not in str(item.id):
+                continue
+            picks.append(app_commands.Choice(name=f"{item.name} (ID {item.id}) x{inv.qty}", value=item.id))
+            if len(picks) >= 25:
+                break
+        return picks
+
+    async def inventory_healing_item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[int]]:
+        picks = await self.inventory_item_autocomplete(interaction, current)
+        out: list[app_commands.Choice[int]] = []
+        async with SessionLocal() as session:
+            ids = [choice.value for choice in picks]
+            if not ids:
+                return []
+            items = (await session.execute(select(Item).where(Item.id.in_(ids)))).scalars().all()
+            by_id = {item.id: item for item in items}
+
+        for choice in picks:
+            item = by_id.get(choice.value)
+            if item and is_healing(item):
+                out.append(choice)
+        return out
+
     @app_commands.command(description="Equip an item from inventory to a loadout slot.")
     @app_commands.describe(slot="Slot to equip", item_id="Choose an item from your inventory", weapon_slot="Only used when slot is weapon")
     @app_commands.autocomplete(item_id=equip_item_autocomplete)
@@ -751,6 +787,7 @@ class GameplayCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Donate item quantity to expedition.")
+    @app_commands.autocomplete(item_id=inventory_item_autocomplete)
     async def expedition_donate_item(self, interaction: discord.Interaction, item_id: int, qty: int) -> None:
         async with SessionLocal() as session:
             user = await get_or_create_user(session, interaction.user.id)
@@ -1009,7 +1046,13 @@ class GameplayCog(commands.Cog):
             heal = HEALING_ITEM_FLAT.get(sid, 35)
             embed.add_field(name="Healing", value=f"Restores {heal} HP", inline=True)
         if is_gadget(item) and not is_healing(item):
-            utility_power = max(5, int(item.base_value / 260) + 6)
+            utility_power = gadget_utility_from_payload({
+                "source_id": sid,
+                "source_type": item_kind,
+                "rarity": item.rarity.value,
+                "value": item.base_value,
+                "description": str(metadata.get("description") or ""),
+            })
             embed.add_field(name="Utility Power", value=str(utility_power), inline=True)
 
         await interaction.response.send_message(embed=embed)
@@ -1028,6 +1071,7 @@ class GameplayCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Use a healing item from your inventory to restore HP.")
+    @app_commands.autocomplete(item_id=inventory_healing_item_autocomplete)
     async def heal(self, interaction: discord.Interaction, item_id: int, qty: app_commands.Range[int, 1, 10] = 1) -> None:
         async with SessionLocal() as session:
             user = await get_or_create_user(session, interaction.user.id)

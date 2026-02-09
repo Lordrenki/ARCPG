@@ -11,6 +11,7 @@ from arkpg.game.loadout import (
     is_shield,
     is_weapon,
     shield_reduction,
+    gadget_utility_from_payload,
 )
 
 
@@ -46,3 +47,16 @@ def test_payload_healing_and_shield_values() -> None:
 
     assert healing_amount(heal_payload) == HEALING_ITEM_FLAT["vita_shot"]
     assert shield_reduction(shield_payload) == SHIELD_DAMAGE_REDUCTION["medium_shield"]
+
+
+def test_gadget_utility_uses_description_and_type() -> None:
+    grenade = {"source_id": "frag_grenade", "source_type": "quick use", "rarity": "rare", "value": 5000, "description": "An explosive grenade."}
+    zipline = {"source_id": "zipline", "source_type": "deployable", "rarity": "rare", "value": 1000, "description": "Mobility deployable."}
+
+    assert gadget_utility_from_payload(grenade) > gadget_utility_from_payload(zipline)
+
+
+def test_as_item_payload_contains_description() -> None:
+    item = _item(source_id="wolfpack", source_type="quick use", item_type=ItemType.GADGET, description="homing explosive")
+    payload = as_item_payload(item)
+    assert payload["description"] == "homing explosive"
