@@ -31,12 +31,20 @@ from arkpg.db.models import (
 from arkpg.game.economy import level_from_xp
 
 
-_ACTIVITY_COOLDOWNS = {"scavenge": 45, "salvage": 60, "courier": 75}
+_ACTIVITY_COOLDOWNS = {"scavenge": 45, "salvage": 60, "courier": 75, "work": 4 * 60 * 60, "dice": 20}
 from arkpg.game.items import infer_rarity, load_items
 from arkpg.game.quest_catalog import QUESTS
 from arkpg.game.title_catalog import TITLE_RULE_MAP, TITLE_RULES
 
 RARITY_MULTIPLIER = {"common": 1.0, "uncommon": 1.3, "rare": 1.7, "epic": 2.4, "legendary": 3.2}
+
+_WORK_SCENARIOS = [
+    ("Cleaned toilets in the bunker and got all stinky.", 70, 180),
+    ("Sorted tangled relay cables in a dust storm.", 55, 150),
+    ("Patched leaks in the metro tunnels.", 80, 210),
+    ("Guarded a caravan through raider territory.", 95, 240),
+    ("Scrubbed rust off old ARC drone parts.", 60, 165),
+]
 
 
 def as_utc(dt: datetime) -> datetime:
@@ -320,6 +328,47 @@ class ActivityService:
             user.credits += payout
         self.session.add(ActivityAttempt(user_id=user.id, activity_type="courier", seed=seed, result={"stake": stake, "success": success, "payout": payout}))
         return ActivityResult(seed, success, payout - stake if success else -stake, [], "Courier success." if success else "Courier run failed.")
+
+    async def work(self, user: User) -> ActivityResult:
+        await self._check_cd(user.id, "work", _ACTIVITY_COOLDOWNS["work"])
+        seed = await self._seed(user.id, "work")
+        rng = random.Random(seed)
+        scenario, low, high = rng.choice(_WORK_SCENARIOS)
+        credits = rng.randint(low, high)
+        user.credits += credits
+        self.session.add(ActivityAttempt(user_id=user.id, activity_type="work", seed=seed, result={"credits": credits, "scenario": scenario}))
+        return ActivityResult(seed, True, credits, [], f"{scenario} Earned **{credits}** credits.")
+
+    async def dice(self, user: User, stake: int) -> ActivityResult:
+        await self._check_cd(user.id, "dice", _ACTIVITY_COOLDOWNS["dice"])
+        if stake < 10:
+            raise ValueError("Stake must be >= 10 credits.")
+        if user.credits < stake:
+            raise ValueError("Not enough credits for stake.")
+
+        seed = await self._seed(user.id, "dice")
+        rng = random.Random(seed)
+        roll = rng.randint(1, 6)
+        user.credits -= stake
+
+        if roll >= 5:
+            payout = stake * 2
+            user.credits += payout
+            net = payout - stake
+            message = f"You rolled **{roll}** and won! Net **+{net}** credits."
+            success = True
+        elif roll == 4:
+            user.credits += stake
+            net = 0
+            message = f"You rolled **{roll}**. Push — your stake was returned."
+            success = True
+        else:
+            net = -stake
+            message = f"You rolled **{roll}** and lost **{stake}** credits."
+            success = False
+
+        self.session.add(ActivityAttempt(user_id=user.id, activity_type="dice", seed=seed, result={"stake": stake, "roll": roll, "net": net}))
+        return ActivityResult(seed, success, net, [], message)
 
 
 class ExpeditionService:

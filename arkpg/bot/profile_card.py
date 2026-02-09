@@ -58,8 +58,15 @@ async def render_profile_card(
     equipped_healing: str,
     equipped_shield: str,
     background: ProfileBackground,
+    admin_background_path: str | None = None,
 ) -> BytesIO:
     base = _build_background(background).convert("RGBA")
+    if admin_background_path:
+        try:
+            admin_bg = Image.open(admin_background_path).convert("RGBA").resize((CARD_SIZE, CARD_SIZE))
+            base = admin_bg
+        except OSError:
+            pass
     _add_bottom_fade(base)
 
     card_mask = Image.new("L", (CARD_SIZE, CARD_SIZE), 0)
@@ -103,12 +110,16 @@ async def render_profile_card(
     filled_width = max(0, int(inner_w * progress))
     if filled_width > 0:
         draw.rounded_rectangle((xp_x + fill_inset, bar_y + fill_inset, xp_x + fill_inset + filled_width, bar_y + bar_h - fill_inset), radius=10, fill=(214, 186, 120, 235))
-    draw.text((xp_x + 12, bar_y + 12), "XP", fill=(255, 255, 255), font=small_font)
-    draw.text((xp_x + xp_w - 130, bar_y + 12), f"{current_xp}/{needed_xp}", fill=(240, 240, 240), font=small_font)
+    draw.text((xp_x + 12, bar_y + 12), "XP", fill=(255, 255, 255), font=mid_bold_font)
+    draw.text((xp_x + xp_w - 180, bar_y + 12), f"{current_xp}/{needed_xp}", fill=(240, 240, 240), font=mid_bold_font)
 
     equipped_title_y = bar_y
     draw.rounded_rectangle((equipped_x, equipped_title_y, equipped_x + equipped_w, equipped_title_y + bar_h), radius=14, fill=(132, 149, 201, 210))
-    draw.text((equipped_x + 16, equipped_title_y + 12), "Equipped", fill=(255, 255, 255), font=small_font)
+    equipped_label = "Equipped"
+    label_box = draw.textbbox((0, 0), equipped_label, font=mid_bold_font)
+    label_w = label_box[2] - label_box[0]
+    label_h = label_box[3] - label_box[1]
+    draw.text((equipped_x + (equipped_w - label_w) / 2, equipped_title_y + (bar_h - label_h) / 2 - 2), equipped_label, fill=(255, 255, 255), font=mid_bold_font)
 
     if equipped_weapons:
         weapon_text = equipped_weapons[0]
@@ -140,6 +151,6 @@ async def render_profile_card(
     draw.multiline_text((38, 595), bio_text, fill=(218, 218, 218), font=small_font, spacing=4)
 
     out = BytesIO()
-    base.convert("RGB").save(out, format="PNG")
+    base.save(out, format="PNG")
     out.seek(0)
     return out
