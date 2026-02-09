@@ -77,7 +77,7 @@ tests/
 - Unified EventBus updates quests and titles from emitted gameplay events.
 
 ## Items Seeding
-- Seeder uses `/mnt/data/items.json` for item metadata.
+- Seeder uses `arkpg/db/items.json` for item metadata (falls back to `/mnt/data/items.json` in external-hosted setups).
 - Rarity normalization: `common/uncommon/rare/epic/legendary`, null/malformed rarity defaults to `common`.
 - If file is unavailable in local/dev environment, a tiny fallback seed is used to keep the bot bootable.
 
