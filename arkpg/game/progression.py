@@ -106,21 +106,34 @@ class SeederService:
             for rule in TITLE_RULES:
                 session.add(Title(id=rule.id, name=rule.name, description=rule.description, category=rule.category, rarity=rule.rarity, is_hidden=rule.is_hidden, how_to_earn=rule.how_to_earn))
 
+        staff_title = await session.get(Title, "arcpg_staff_team")
+        if staff_title is None:
+            session.add(Title(id="arcpg_staff_team", name="ARCPG Staff Team", description="Exclusive title for ARCPG administration staff.", category="Staff", rarity="legendary", is_hidden=False, how_to_earn="Granted to ARCPG staff members."))
+
         if (await session.execute(select(Quest.id).limit(1))).scalar_one_or_none() is None:
             for q in QUESTS:
                 session.add(Quest(**q, is_sidequest=False))
 
-        if (await session.execute(select(Item.id).limit(1))).scalar_one_or_none() is None:
-            for item in load_items():
+        existing_items = (await session.execute(select(Item))).scalars().all()
+        existing_by_name = {row.name: row for row in existing_items}
+        for item in load_items():
+            metadata = {"foundIn": list(item.found_in), "icon": item.icon, "description": item.description, "source_id": item.id, "source_type": item.type}
+            row = existing_by_name.get(item.name)
+            if row is None:
                 session.add(
                     Item(
                         name=item.name,
                         type=SeederService._normalize_type(item.type),
                         rarity=SeederService._normalize_rarity(item.rarity, item.value),
                         base_value=item.value,
-                        metadata_json={"foundIn": list(item.found_in), "icon": item.icon, "description": item.description, "source_id": item.id, "source_type": item.type},
+                        metadata_json=metadata,
                     )
                 )
+            else:
+                row.type = SeederService._normalize_type(item.type)
+                row.rarity = SeederService._normalize_rarity(item.rarity, item.value)
+                row.base_value = item.value
+                row.metadata_json = metadata
 
         await session.commit()
 
@@ -480,6 +493,25 @@ class ExpeditionService:
         catchup["missed_points"] = max(0, int(catchup.get("missed_points", 0)) - 1)
         state.catchup_state = catchup
 
+        # Seasonal reset with permanent growth.
+        stats = dict(user.stats or {})
+        for key in ("base_combat", "base_tech", "base_luck"):
+            current = int(stats.get(key, stats.get(key.replace("base_", ""), 10)) or 10)
+            stats[key] = max(1, int(round(current * 1.25)))
+        stats["combat"] = stats["base_combat"]
+        stats["tech"] = stats["base_tech"]
+        stats["luck"] = stats["base_luck"]
+        stats["health"] = 100
+        stats["max_health"] = 100
+        stats["loadout"] = {"weapons": [], "gadget": None, "healing": None, "shield": None}
+        user.stats = stats
+        user.xp = 0
+        user.level = 1
+
+        inv_rows = (await self.session.execute(select(Inventory).where(Inventory.user_id == user.id))).scalars().all()
+        for inv in inv_rows:
+            await self.session.delete(inv)
+
         await EventBus.emit(self.session, user, "EXPEDITION_DEPARTED", {"counter_updates": {"expeditions_departed": 1}})
         await self.session.commit()
-        return {"permanent": permanent, "temp": tb, "score": contrib.score}
+        return {"permanent": permanent, "temp": tb, "score": contrib.score, "reset": True}

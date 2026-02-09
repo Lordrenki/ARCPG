@@ -48,6 +48,7 @@ from arkpg.game.service import (
     normalized_profile,
     start_deployment,
     update_user_profile,
+    ensure_starter_kit,
 )
 
 
@@ -150,6 +151,7 @@ class GameplayCog(commands.Cog):
             existing = (await session.execute(select(User).where(User.discord_id == interaction.user.id))).scalar_one_or_none()
             user = await get_or_create_user(session, interaction.user.id)
             await SeederService.ensure_seed_data(session)
+            await ensure_starter_kit(session, user)
             await session.commit()
 
         profile = normalized_profile(user)
@@ -309,6 +311,8 @@ class GameplayCog(commands.Cog):
         combat = user.stats.get("combat", 10)
         tech = user.stats.get("tech", 10)
         luck = user.stats.get("luck", 10)
+        health = int(user.stats.get("health", 100) or 100)
+        max_health = int(user.stats.get("max_health", 100) or 100)
         weapons = [w.get("name", "Unknown") for w in (loadout.get("weapons") or []) if w]
         gadget = (loadout.get("gadget") or {}).get("name", "None")
         healing = (loadout.get("healing") or {}).get("name", "None")
@@ -329,6 +333,8 @@ class GameplayCog(commands.Cog):
             equipped_gadget=str(gadget),
             equipped_healing=str(healing),
             equipped_shield=str((loadout.get("shield") or {}).get("name", "None")),
+            health=health,
+            max_health=max_health,
             background=background,
             admin_background_path=str(ADMIN_PROFILE_BACKGROUND_PATH) if is_admin else None,
         )
@@ -501,10 +507,12 @@ class GameplayCog(commands.Cog):
             user = await get_or_create_user(session, interaction.user.id)
             try:
                 rewards = await ExpeditionService(session).depart(user)
+                await ensure_starter_kit(session, user)
+                await session.commit()
             except ValueError as exc:
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
-        await interaction.response.send_message(f"Departure complete. Permanent: {rewards['permanent']} | Temporary: {rewards['temp']}", ephemeral=True)
+        await interaction.response.send_message(f"Departure complete. Permanent: {rewards['permanent']} | Temporary: {rewards['temp']}\nSeason reset applied: inventory cleared, XP reset, level reset, and base stats increased by 25%.", ephemeral=True)
 
     @app_commands.command(description="View expedition rewards and catch-up state.")
     async def expedition_rewards(self, interaction: discord.Interaction) -> None:
@@ -749,14 +757,41 @@ class GameplayCog(commands.Cog):
             if abs(me.level - them.level) > 8:
                 await interaction.response.send_message("Level difference too large. Find a closer rival.", ephemeral=True)
                 return
-            my_power = me.level + me.stats.get("combat", 10) + me.stats.get("luck", 10) * 0.2
-            their_power = them.level + them.stats.get("combat", 10) + them.stats.get("luck", 10) * 0.2
+            my_power = me.level + me.stats.get("combat", 10) + me.stats.get("luck", 10) * 0.25 + me.stats.get("tech", 10) * 0.15
+            their_power = them.level + them.stats.get("combat", 10) + them.stats.get("luck", 10) * 0.25 + them.stats.get("tech", 10) * 0.15
             i_win = my_power >= their_power
+
+            winner_user = me if i_win else them
+            loser_user = them if i_win else me
+            winner_member = interaction.user if i_win else opponent
+            loser_member = opponent if i_win else interaction.user
+
             if i_win:
                 await EventBus.emit(session, me, "PVP_WIN", {"counter_updates": {"pvp_wins": 1, "pvp_fair_wins": 1}})
+            xp_reward = 35
+            credit_reward = 120
+            winner_user.xp += xp_reward
+            winner_user.credits += credit_reward
+            winner_user.level = level_from_xp(winner_user.xp)
+
+            loser_stats = dict(loser_user.stats or {})
+            max_hp = int(loser_stats.get("max_health", 100) or 100)
+            loser_hp = int(loser_stats.get("health", max_hp) or max_hp)
+            loser_stats["health"] = max(1, loser_hp - 18)
+            loser_user.stats = loser_stats
+
             await session.commit()
-        winner = interaction.user.mention if i_win else opponent.mention
-        await interaction.response.send_message(f"Duel resolved. Winner: {winner}")
+
+        flavor = (
+            f"{winner_member.mention} fought off {loser_member.mention} valiantly and claimed the arena."
+            if i_win else
+            f"{loser_member.mention} fell and died, so {winner_member.mention} wins the duel."
+        )
+        await interaction.response.send_message(
+            f"{flavor}\n"
+            f"Winner reward: **+{xp_reward} XP**, **+{credit_reward} credits**. "
+            f"Loser penalty: **-18 HP**."
+        )
 
     @app_commands.command(description="Create a pending trade offer.")
     async def trade(

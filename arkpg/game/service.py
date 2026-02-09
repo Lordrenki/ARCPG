@@ -20,7 +20,7 @@ from arkpg.db.models import (
 )
 from arkpg.game.deployments import deployment_end, make_seed, resolve_deployment
 from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
-from arkpg.game.economy import compute_idle_rewards, level_from_xp
+from arkpg.game.economy import compute_idle_rewards, level_from_xp, scale_stats_with_level
 from arkpg.game.profile_backgrounds import DEFAULT_BACKGROUND_ID, normalize_collected_background_ids
 from arkpg.game.loadout import as_item_payload, healing_amount, item_power_from_payload, shield_reduction
 from arkpg.game.progression import EventBus
@@ -36,12 +36,50 @@ async def get_or_create_user(session: AsyncSession, discord_id: int) -> User:
     result = await session.execute(select(User).where(User.discord_id == discord_id))
     user = result.scalar_one_or_none()
     if user:
+        stats = scale_stats_with_level(dict(user.stats or {}), user.level)
+        user.stats = stats
         return user
     user = User(discord_id=discord_id, progression_json={})
     session.add(user)
     await session.flush()
+    user.stats = scale_stats_with_level(dict(user.stats or {}), user.level)
     return user
 
+
+
+
+async def ensure_starter_kit(session: AsyncSession, user: User) -> None:
+    starter_ids = ("kettle", "light_shield", "bandage")
+    rows = (await session.execute(select(Item).where(Item.metadata_json["source_id"].as_string().in_(starter_ids)))).scalars().all()
+    if len(rows) < len(starter_ids):
+        fallback = (await session.execute(select(Item).where(Item.name.in_(["Kettle I", "Light Shield", "Bandage"])))).scalars().all()
+        by_name = {i.name: i for i in fallback}
+        for name in ("Kettle I", "Light Shield", "Bandage"):
+            if name in by_name and by_name[name] not in rows:
+                rows.append(by_name[name])
+
+    items_by_sid = {str((it.metadata_json or {}).get("source_id") or "").lower(): it for it in rows}
+    for item in rows:
+        sid = str((item.metadata_json or {}).get("source_id") or "").lower()
+        if sid not in items_by_sid:
+            items_by_sid[sid] = item
+
+    for item in [items_by_sid.get("kettle"), items_by_sid.get("light_shield"), items_by_sid.get("bandage")]:
+        if item is None:
+            continue
+        inv = (await session.execute(select(Inventory).where(and_(Inventory.user_id == user.id, Inventory.item_id == item.id, Inventory.weapon_level.is_(None))))).scalar_one_or_none()
+        if inv is None:
+            session.add(Inventory(user_id=user.id, item_id=item.id, qty=1))
+
+    loadout = get_user_loadout(user)
+    kettle = items_by_sid.get("kettle")
+    shield = items_by_sid.get("light_shield")
+    bandage = items_by_sid.get("bandage")
+    loadout["weapons"] = [as_item_payload(kettle)] if kettle else []
+    loadout["gadget"] = None
+    loadout["healing"] = as_item_payload(bandage) if bandage else None
+    loadout["shield"] = as_item_payload(shield) if shield else None
+    set_user_loadout(user, loadout)
 
 async def claim_idle(session: AsyncSession, settings: Settings, discord_id: int) -> tuple[User, int, int, int]:
     user = await get_or_create_user(session, discord_id)
@@ -57,6 +95,7 @@ async def claim_idle(session: AsyncSession, settings: Settings, discord_id: int)
     user.xp += xp_gain
     user.credits += credits_gain
     user.level = level_from_xp(user.xp)
+    user.stats = scale_stats_with_level(dict(user.stats or {}), user.level)
     if minutes < 1:
         session.add(AuditLog(event_type="suspicious_claim_frequency", payload={"discord_id": discord_id, "minutes": minutes}))
     await session.commit()
@@ -107,6 +146,7 @@ async def extract_deployment(session: AsyncSession, discord_id: int, auto: bool 
     user.xp += resolution.xp
     user.credits += resolution.credits
     user.level = level_from_xp(user.xp)
+    user.stats = scale_stats_with_level(dict(user.stats or {}), user.level)
     stats = user.stats
     stats["raid_clears"] = int(stats.get("raid_clears", 0)) + (1 if resolution.status != "failure" else 0)
     stats["legendary_finds"] = int(stats.get("legendary_finds", 0)) + sum(1 for x in resolution.loot if x["rarity"] == "legendary")
