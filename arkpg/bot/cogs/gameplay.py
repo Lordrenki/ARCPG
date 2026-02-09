@@ -220,10 +220,14 @@ class GameplayCog(commands.Cog):
             user = await get_or_create_user(session, interaction.user.id)
             profile = normalized_profile(user)
             title = (await session.get(Title, user.equipped_title_id)).name if user.equipped_title_id else "Unassigned"
+            _user, loadout = await get_equipped_loadout(session, interaction.user.id)
 
         combat = user.stats.get("combat", 10)
         tech = user.stats.get("tech", 10)
         luck = user.stats.get("luck", 10)
+        weapons = [w.get("name", "Unknown") for w in (loadout.get("weapons") or []) if w]
+        gadget = (loadout.get("gadget") or {}).get("name", "None")
+        healing = (loadout.get("healing") or {}).get("name", "None")
         background = get_background(str(profile["background_id"]))
         card = await render_profile_card(
             interaction_user=interaction.user,
@@ -236,6 +240,9 @@ class GameplayCog(commands.Cog):
             combat=combat,
             tech=tech,
             luck=luck,
+            equipped_weapons=weapons,
+            equipped_gadget=str(gadget),
+            equipped_healing=str(healing),
             background=background,
         )
         file = discord.File(card, filename="profile-card.png")
