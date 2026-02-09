@@ -119,6 +119,9 @@ async def start_deployment(session: AsyncSession, discord_id: int, zone: str) ->
     if int(stats.get("health", 0)) <= 0:
         raise ValueError("You are at 0 HP. Use /heal before starting a deployment.")
     stats.setdefault("loadout", _default_loadout())
+    weapons = [w for w in (stats.get("loadout", {}).get("weapons") or []) if w]
+    if not weapons:
+        raise ValueError("You need to equip a weapon with /equip before starting a deployment.")
     user.stats = stats
 
     dep = Deployment(user_id=user.id, zone=zone, started_at=now, ends_at=deployment_end(zone, now), seeded_rng=seed)
