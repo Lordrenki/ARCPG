@@ -11,7 +11,20 @@ def level_from_xp(xp: int) -> int:
 def xp_for_level(level: int) -> int:
     if level <= 1:
         return 0
-    return int(((level - 1) ** (1 / 0.62)) * 120)
+    return int(((level - 1) ** (1 / 0.56)) * 180)
+
+
+def scale_stats_with_level(stats: dict, level: int) -> dict:
+    normalized = dict(stats or {})
+    normalized["base_combat"] = int(normalized.get("base_combat", normalized.get("combat", 10)) or 10)
+    normalized["base_tech"] = int(normalized.get("base_tech", normalized.get("tech", 10)) or 10)
+    normalized["base_luck"] = int(normalized.get("base_luck", normalized.get("luck", 10)) or 10)
+
+    level_bonus = max(0, int(level) - 1)
+    normalized["combat"] = normalized["base_combat"] + (level_bonus * 2)
+    normalized["tech"] = normalized["base_tech"] + (level_bonus * 2)
+    normalized["luck"] = normalized["base_luck"] + level_bonus
+    return normalized
 
 
 def compute_idle_rewards(

@@ -57,6 +57,8 @@ async def render_profile_card(
     equipped_gadget: str,
     equipped_healing: str,
     equipped_shield: str,
+    health: int,
+    max_health: int,
     background: ProfileBackground,
     admin_background_path: str | None = None,
 ) -> BytesIO:
@@ -98,7 +100,8 @@ async def render_profile_card(
 
     draw.text((38, 30), f"Lv {level}", fill=(255, 255, 255), font=mid_bold_font)
     draw.text((210, 196), callsign, fill=(245, 245, 245), font=name_font)
-    draw.text((210, 252), f"{title_name}", fill=(205, 205, 205), font=mid_font)
+    title_color = (72, 176, 255) if title_name == "ARCPG Staff Team" else (205, 205, 205)
+    draw.text((210, 252), f"{title_name}", fill=title_color, font=mid_font)
 
     current_xp, needed_xp, progress = _xp_progress(xp, level)
     xp_x, bar_y, xp_w, bar_h = 38, 330, 420, 54
@@ -113,7 +116,25 @@ async def render_profile_card(
     draw.text((xp_x + 12, bar_y + 12), "XP", fill=(255, 255, 255), font=mid_bold_font)
     draw.text((xp_x + xp_w - 180, bar_y + 12), f"{current_xp}/{needed_xp}", fill=(240, 240, 240), font=mid_bold_font)
 
-    equipped_title_y = bar_y
+    hp_ratio = max(0.0, min(float(health) / max(1, float(max_health)), 1.0))
+    hp_color = (55, 199, 112, 230)
+    if hp_ratio < 0.25:
+        hp_color = (215, 63, 63, 230)
+    elif hp_ratio < 0.5:
+        hp_color = (234, 134, 44, 230)
+    elif hp_ratio < 0.75:
+        hp_color = (227, 207, 56, 230)
+
+    hp_x, hp_w = equipped_x, equipped_w
+    draw.rounded_rectangle((hp_x, bar_y, hp_x + hp_w, bar_y + bar_h), radius=14, fill=(95, 95, 95, 180))
+    hp_inner = hp_w - (fill_inset * 2)
+    hp_filled = max(0, int(hp_inner * hp_ratio))
+    if hp_filled > 0:
+        draw.rounded_rectangle((hp_x + fill_inset, bar_y + fill_inset, hp_x + fill_inset + hp_filled, bar_y + bar_h - fill_inset), radius=10, fill=hp_color)
+    draw.text((hp_x + 12, bar_y + 12), "HP", fill=(255, 255, 255), font=mid_bold_font)
+    draw.text((hp_x + hp_w - 110, bar_y + 12), f"{health}/100", fill=(240, 240, 240), font=mid_bold_font)
+
+    equipped_title_y = bar_y + bar_h + 18
     draw.rounded_rectangle((equipped_x, equipped_title_y, equipped_x + equipped_w, equipped_title_y + bar_h), radius=14, fill=(132, 149, 201, 210))
     equipped_label = "Equipped"
     label_box = draw.textbbox((0, 0), equipped_label, font=mid_bold_font)
