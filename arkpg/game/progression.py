@@ -310,8 +310,13 @@ class ActivityService:
         seed = await self._seed(user.id, "scavenge")
         rng = random.Random(seed)
         items = (await self.session.execute(select(Item).limit(25))).scalars().all()
-        picked = rng.choice(items)
-        qty = rng.randint(1, 2)
+        fabric_item = next((it for it in items if str((it.metadata_json or {}).get("source_id") or "").strip().lower() == "fabric"), None)
+        if fabric_item and rng.random() < 0.35:
+            picked = fabric_item
+            qty = rng.randint(1, 3)
+        else:
+            picked = rng.choice(items)
+            qty = rng.randint(1, 2)
         credits = rng.randint(20, 80)
         event = "mini-event triggered" if rng.random() < 0.2 else "quiet pickup"
         await InventoryService(self.session).add_item(user.id, picked.id, qty)

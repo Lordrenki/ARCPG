@@ -13,6 +13,10 @@ def is_craftable_item(item: Item) -> bool:
 def crafting_recipe_for_item(item: Item) -> list[tuple[str, int]]:
     rarity = item.rarity.value
     tier = RARITY_TIER.get(rarity, 1)
+    source_id = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
+
+    if source_id == "bandage":
+        return [("fabric", 5)]
 
     if is_healing(item):
         return [
@@ -47,4 +51,3 @@ def crafting_recipe_for_item(item: Item) -> list[tuple[str, int]]:
     if tier >= 4:
         recipe.append(("arc_circuitry", 1))
     return recipe
-

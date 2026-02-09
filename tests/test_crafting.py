@@ -35,3 +35,8 @@ def test_legendary_weapon_recipe_has_high_tier_materials() -> None:
     recipe = dict(crafting_recipe_for_item(weapon))
     assert "arc_alloy" in recipe
     assert "advanced_mechanical_components" in recipe
+
+
+def test_bandage_recipe_requires_only_fabric() -> None:
+    bandage = _item("bandage", "quick use", ItemType.GADGET, Rarity.COMMON, description="restores health")
+    assert crafting_recipe_for_item(bandage) == [("fabric", 5)]

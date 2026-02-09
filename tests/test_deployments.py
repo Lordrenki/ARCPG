@@ -29,3 +29,11 @@ def test_deployment_loadout_power_reduces_risk() -> None:
     # deterministic seed should trend equal-or-better with stronger power in our risk model
     ordering = {"failure": 0, "partial": 1, "success": 2}
     assert ordering[strong.status] >= ordering[weak.status]
+
+
+def test_deployment_loot_can_favor_fabric() -> None:
+    had_fabric = any(
+        any(item["name"] == "Fabric" for item in resolve_deployment(f"fabric-seed-{idx}", "Industrial", level=5).loot)
+        for idx in range(30)
+    )
+    assert had_fabric

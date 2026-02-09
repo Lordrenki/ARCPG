@@ -42,8 +42,14 @@ def resolve_deployment(seed: str, zone: str, level: int, extract_late: bool = Fa
     partial = success_roll < risk
     loot_count = 1 if partial else roller.rng.randint(2, 4)
     zone_items = filter_items_for_zone(zone)
+    fabric_matches = [item for item in zone_items if item.id == "fabric"]
     loot = []
     for _ in range(loot_count):
+        if fabric_matches and roller.rng.random() < 0.3:
+            picked = roller.rng.choice(fabric_matches)
+            loot.append({"name": picked.name, "rarity": picked.rarity, "qty": 1})
+            continue
+
         rarity = roller.roll_rarity(zone)
         matching = [item for item in zone_items if item.rarity == rarity]
         if not matching:
