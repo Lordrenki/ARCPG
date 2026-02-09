@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -7,6 +9,8 @@ from arkpg.bot.profile_card import render_profile_card
 from arkpg.bot.views import PaginatedEmbedView
 from arkpg.core.config import get_settings
 from arkpg.db.models import (
+    Deployment,
+    DeploymentStatus,
     Expedition,
     ExpeditionContribution,
     ExpeditionStage,
@@ -30,6 +34,7 @@ from arkpg.game.constants import RARITY_COLORS, ZONE_CONFIG
 from arkpg.game.profile_backgrounds import PROFILE_BACKGROUNDS, get_background
 from arkpg.game.progression import ActivityService, EventBus, ExpeditionService, QuestService, SeederService, TitleService
 from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
+from arkpg.game.economy import level_from_xp
 from arkpg.game.service import (
     atomic_trade_confirm,
     claim_idle,
@@ -45,6 +50,9 @@ from arkpg.game.service import (
 )
 
 
+ADMIN_IDS = {927355923364720651}
+
+
 class GameplayCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -52,6 +60,20 @@ class GameplayCog(commands.Cog):
 
 
 
+
+    def _is_super_admin(self, interaction: discord.Interaction) -> bool:
+        return interaction.user.id in ADMIN_IDS
+
+    def _relative_time(self, dt: datetime) -> str:
+        target = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        seconds = int((target - datetime.now(timezone.utc)).total_seconds())
+        if seconds <= 0:
+            return "ready now"
+        hours, rem = divmod(seconds, 3600)
+        minutes, _ = divmod(rem, 60)
+        if hours:
+            return f"in {hours} hour" + ("s" if hours != 1 else "") + (f" {minutes} minute" + ("s" if minutes != 1 else "") if minutes else "")
+        return f"in {max(1, minutes)} minute" + ("s" if minutes != 1 else "")
 
     def _styled_embed(self, title: str, description: str | None = None, color: int = 0x7A1F2B) -> discord.Embed:
         embed = discord.Embed(title=title, description=description, color=color)
@@ -142,7 +164,7 @@ class GameplayCog(commands.Cog):
 
         embed = self._styled_embed(title=f"Deployment launched: {zone}")
         embed.description = "You descend through static and dust. Keep your sensors alive and extract in time."
-        embed.add_field(name="ETA", value=f"{dep.ends_at:%Y-%m-%d %H:%M UTC}")
+        embed.add_field(name="ETA", value=self._relative_time(dep.ends_at))
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Extract from your finished deployment.")
@@ -218,6 +240,10 @@ class GameplayCog(commands.Cog):
     async def profile(self, interaction: discord.Interaction) -> None:
         async with SessionLocal() as session:
             user = await get_or_create_user(session, interaction.user.id)
+            expected_level = level_from_xp(user.xp)
+            if user.level != expected_level:
+                user.level = expected_level
+                await session.commit()
             profile = normalized_profile(user)
             title = (await session.get(Title, user.equipped_title_id)).name if user.equipped_title_id else "Unassigned"
             _user, loadout = await get_equipped_loadout(session, interaction.user.id)
@@ -243,6 +269,7 @@ class GameplayCog(commands.Cog):
             equipped_weapons=weapons,
             equipped_gadget=str(gadget),
             equipped_healing=str(healing),
+            equipped_shield=str((loadout.get("shield") or {}).get("name", "None")),
             background=background,
         )
         file = discord.File(card, filename="profile-card.png")
@@ -299,8 +326,8 @@ class GameplayCog(commands.Cog):
 
     @app_commands.command(description="Admin: grant a profile background to a user.")
     async def background_grant(self, interaction: discord.Interaction, member: discord.Member, background_id: str) -> None:
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("Administrator permissions required.", ephemeral=True)
+        if not self._is_super_admin(interaction):
+            await interaction.response.send_message("This admin command is restricted.", ephemeral=True)
             return
 
         background_id = background_id.strip().lower()
@@ -443,8 +470,8 @@ class GameplayCog(commands.Cog):
 
     @app_commands.command(description="Admin: start expedition season.")
     async def expedition_start(self, interaction: discord.Interaction, season_number: int) -> None:
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message("Manage Server required.", ephemeral=True)
+        if not self._is_super_admin(interaction):
+            await interaction.response.send_message("This admin command is restricted.", ephemeral=True)
             return
         async with SessionLocal() as session:
             exp = await ExpeditionService(session).create_default(season_number)
@@ -452,8 +479,8 @@ class GameplayCog(commands.Cog):
 
     @app_commands.command(description="Admin: end expedition and open departure window.")
     async def expedition_end(self, interaction: discord.Interaction) -> None:
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message("Manage Server required.", ephemeral=True)
+        if not self._is_super_admin(interaction):
+            await interaction.response.send_message("This admin command is restricted.", ephemeral=True)
             return
         async with SessionLocal() as session:
             exp = await ExpeditionService(session).active()
@@ -466,8 +493,8 @@ class GameplayCog(commands.Cog):
 
     @app_commands.command(description="Admin: configure expedition JSON keys.")
     async def expedition_configure(self, interaction: discord.Interaction, min_depart_score: int, catchup_discount: float) -> None:
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message("Manage Server required.", ephemeral=True)
+        if not self._is_super_admin(interaction):
+            await interaction.response.send_message("This admin command is restricted.", ephemeral=True)
             return
         async with SessionLocal() as session:
             exp = await ExpeditionService(session).active()
@@ -497,6 +524,25 @@ class GameplayCog(commands.Cog):
                 lines.append(f"  Description: {q.description}")
                 lines.append(f"  Requirements: {self._format_requirement(q.requirements or {}, uq.progress or {})}")
             embed.description = "\n".join(lines)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+    @app_commands.command(description="Show action cooldowns.")
+    async def cooldowns(self, interaction: discord.Interaction) -> None:
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, interaction.user.id)
+            activity = ActivityService(session)
+            status = await activity.cooldown_status(user.id)
+            active_dep = (await session.execute(select(Deployment).where(and_(Deployment.user_id == user.id, Deployment.status.in_([DeploymentStatus.ACTIVE, DeploymentStatus.READY_TO_EXTRACT]))))).scalar_one_or_none()
+
+        embed = self._styled_embed(title="Action Cooldowns")
+        embed.add_field(name="Scavenge", value=status.get("scavenge", "Ready now"), inline=True)
+        embed.add_field(name="Salvage", value=status.get("salvage", "Ready now"), inline=True)
+        embed.add_field(name="Courier", value=status.get("courier", "Ready now"), inline=True)
+        if active_dep:
+            embed.add_field(name="Deployment", value=self._relative_time(active_dep.ends_at), inline=False)
+        else:
+            embed.add_field(name="Deployment", value="Ready now", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Run a short scavenge for small loot.")

@@ -29,6 +29,9 @@ from arkpg.db.models import (
     UserTitle,
 )
 from arkpg.game.economy import level_from_xp
+
+
+_ACTIVITY_COOLDOWNS = {"scavenge": 45, "salvage": 60, "courier": 75}
 from arkpg.game.items import infer_rarity, load_items
 from arkpg.game.quest_catalog import QUESTS
 from arkpg.game.title_catalog import TITLE_RULE_MAP, TITLE_RULES
@@ -234,10 +237,38 @@ class ActivityService:
         now = datetime.now(timezone.utc).isoformat()
         return hashlib.sha256(f"{user_id}:{activity}:{now}".encode()).hexdigest()[:32]
 
+    def _format_cooldown(self, remaining_seconds: float) -> str:
+        total = max(1, int(remaining_seconds))
+        hours, rem = divmod(total, 3600)
+        minutes, seconds = divmod(rem, 60)
+        parts: list[str] = []
+        if hours:
+            parts.append(f"{hours} hour" + ("s" if hours != 1 else ""))
+        if minutes:
+            parts.append(f"{minutes} minute" + ("s" if minutes != 1 else ""))
+        if seconds and not hours:
+            parts.append(f"{seconds} second" + ("s" if seconds != 1 else ""))
+        return " ".join(parts[:2])
+
+    async def cooldown_status(self, user_id: int) -> dict[str, str]:
+        now = datetime.now(timezone.utc)
+        status: dict[str, str] = {}
+        for activity, seconds in _ACTIVITY_COOLDOWNS.items():
+            last = (await self.session.execute(select(ActivityAttempt).where(and_(ActivityAttempt.user_id == user_id, ActivityAttempt.activity_type == activity)).order_by(ActivityAttempt.created_at.desc()).limit(1))).scalar_one_or_none()
+            if not last:
+                status[activity] = "Ready now"
+                continue
+            elapsed = (now - as_utc(last.created_at)).total_seconds()
+            remaining = seconds - elapsed
+            status[activity] = f"in {self._format_cooldown(remaining)}" if remaining > 0 else "Ready now"
+        return status
+
     async def _check_cd(self, user_id: int, activity: str, seconds: int) -> None:
         last = (await self.session.execute(select(ActivityAttempt).where(and_(ActivityAttempt.user_id == user_id, ActivityAttempt.activity_type == activity)).order_by(ActivityAttempt.created_at.desc()).limit(1))).scalar_one_or_none()
-        if last and (datetime.now(timezone.utc) - as_utc(last.created_at)).total_seconds() < seconds:
-            raise ValueError(f"{activity} cooldown active.")
+        if last:
+            remaining = seconds - (datetime.now(timezone.utc) - as_utc(last.created_at)).total_seconds()
+            if remaining > 0:
+                raise ValueError(f"{activity.title()} available in {self._format_cooldown(remaining)}.")
 
     async def scavenge(self, user: User) -> ActivityResult:
         await self._check_cd(user.id, "scavenge", 45)
