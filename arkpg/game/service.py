@@ -116,6 +116,8 @@ async def start_deployment(session: AsyncSession, discord_id: int, zone: str) ->
     stats = dict(user.stats) if isinstance(user.stats, dict) else {}
     stats.setdefault("max_health", 100)
     stats.setdefault("health", stats.get("max_health", 100))
+    if int(stats.get("health", 0)) <= 0:
+        raise ValueError("You are at 0 HP. Use /heal before starting a deployment.")
     stats.setdefault("loadout", _default_loadout())
     user.stats = stats
 
@@ -272,20 +274,22 @@ def compute_loadout_power(user: User) -> dict:
 
 def _apply_deployment_survivability(user: User, event_damage: int, payload: dict) -> dict:
     stats = dict(user.stats) if isinstance(user.stats, dict) else {}
-    max_health = int(stats.get("max_health", 100) or 100)
-    current = int(stats.get("health", max_health) or max_health)
+    max_health_raw = stats.get("max_health")
+    max_health = int(max_health_raw if max_health_raw is not None else 100)
+    health_raw = stats.get("health")
+    current = int(health_raw if health_raw is not None else max_health)
     reduction = float(payload.get("shield_reduction", 0.0) or 0.0)
     mitigated = max(0, int(round(event_damage * (1.0 - reduction))))
     post = current - mitigated
     healing_used = False
     if post <= 0 and payload.get("healing_amount", 0) > 0:
         healing_used = True
-        post = max(1, int(payload["healing_amount"]))
+        post = int(payload["healing_amount"])
         loadout = get_user_loadout(user)
         loadout["healing"] = None
-        set_user_loadout(user, loadout)
+        stats["loadout"] = loadout
     stats["max_health"] = max_health
-    stats["health"] = max(1, min(max_health, post))
+    stats["health"] = max(0, min(max_health, post))
     user.stats = stats
     return {"incoming_damage": event_damage, "effective_damage": mitigated, "healing_used": healing_used, "health_after": stats["health"]}
 
