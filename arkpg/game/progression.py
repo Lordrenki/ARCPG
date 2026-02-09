@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import random
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +28,7 @@ from arkpg.db.models import (
     UserQuest,
     UserTitle,
 )
+from arkpg.game.items import infer_rarity, load_items
 from arkpg.game.quest_catalog import QUESTS
 from arkpg.game.title_catalog import TITLE_RULE_MAP, TITLE_RULES
 
@@ -63,27 +62,31 @@ class EventBus:
 
 class SeederService:
     @staticmethod
-    def _normalize_rarity(value: str | None) -> str:
-        if not value:
-            return "common"
-        lowered = str(value).lower().strip()
-        if lowered not in RARITY_MULTIPLIER:
-            return "common"
-        return lowered
+    def _normalize_rarity(value: str | None, item_value: int = 0) -> str:
+        return infer_rarity(value, item_value)
 
     @staticmethod
     def _normalize_type(value: str | None) -> ItemType:
-        lowered = str(value or "component").lower()
-        mapping = {
-            "weapon": ItemType.WEAPON,
-            "armor": ItemType.ARMOR,
-            "gadget": ItemType.GADGET,
-            "component": ItemType.COMPONENT,
-            "blueprint": ItemType.BLUEPRINT,
-            "recyclable": ItemType.RECYCLABLE,
-            "material": ItemType.COMPONENT,
+        lowered = str(value or "component").lower().strip()
+        if lowered == "blueprint":
+            return ItemType.BLUEPRINT
+        if lowered == "recyclable":
+            return ItemType.RECYCLABLE
+
+        weapon_types = {
+            "rifle", "burst rifle", "smg", "shotgun", "sniper", "lmg", "pistol", "hand cannon", "bow",
+            "weapon", "melee", "launcher", "arc weapon",
         }
-        return mapping.get(lowered, ItemType.COMPONENT)
+        armor_types = {"armor", "helmet", "chest", "boots", "gauntlets", "shield"}
+        gadget_types = {"quick use", "modification", "deployable", "gadget", "consumable"}
+
+        if lowered in weapon_types:
+            return ItemType.WEAPON
+        if lowered in armor_types:
+            return ItemType.ARMOR
+        if lowered in gadget_types:
+            return ItemType.GADGET
+        return ItemType.COMPONENT
 
     @staticmethod
     async def ensure_seed_data(session: AsyncSession) -> None:
@@ -96,18 +99,16 @@ class SeederService:
                 session.add(Quest(**q, is_sidequest=False))
 
         if (await session.execute(select(Item.id).limit(1))).scalar_one_or_none() is None:
-            file_path = Path("/mnt/data/items.json")
-            if file_path.exists():
-                data = json.loads(file_path.read_text())
-            else:
-                data = [
-                    {"name": "Copper Wire Bundle", "rarity": "common", "type": "component", "value": 30, "foundIn": ["residential"]},
-                    {"name": "Refined Capacitor", "rarity": "rare", "type": "component", "value": 130, "foundIn": ["industrial"]},
-                    {"name": "ARC Lattice Core", "rarity": "epic", "type": "component", "value": 300, "foundIn": ["ARC"]},
-                    {"name": "Reclaimed Plate", "rarity": "common", "type": "recyclable", "value": 40, "foundIn": ["topside material"]},
-                ]
-            for item in data:
-                session.add(Item(name=item["name"], type=SeederService._normalize_type(item.get("type")), rarity=SeederService._normalize_rarity(item.get("rarity")), base_value=int(item.get("value", 0)), metadata_json={"foundIn": item.get("foundIn", []), "icon": item.get("icon"), "description": item.get("description", "")}))
+            for item in load_items():
+                session.add(
+                    Item(
+                        name=item.name,
+                        type=SeederService._normalize_type(item.type),
+                        rarity=SeederService._normalize_rarity(item.rarity, item.value),
+                        base_value=item.value,
+                        metadata_json={"foundIn": list(item.found_in), "icon": item.icon, "description": item.description, "source_id": item.id},
+                    )
+                )
 
         await session.commit()
 

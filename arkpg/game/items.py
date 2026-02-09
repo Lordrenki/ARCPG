@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+
+
+RARITY_ORDER = ("common", "uncommon", "rare", "epic", "legendary")
+
+
+@dataclass(frozen=True)
+class GameItem:
+    id: str
+    name: str
+    rarity: str
+    type: str
+    value: int
+    found_in: tuple[str, ...]
+    description: str
+    icon: str | None
+
+
+def _repo_items_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "db" / "items.json"
+
+
+def _external_items_path() -> Path:
+    return Path("/mnt/data/items.json")
+
+
+def infer_rarity(raw_rarity: str | None, value: int) -> str:
+    if raw_rarity and str(raw_rarity).strip().lower() in RARITY_ORDER:
+        return str(raw_rarity).strip().lower()
+
+    if value <= 500:
+        return "common"
+    if value <= 2500:
+        return "uncommon"
+    if value <= 7000:
+        return "rare"
+    if value <= 13000:
+        return "epic"
+    return "legendary"
+
+
+@lru_cache(maxsize=1)
+def load_items() -> tuple[GameItem, ...]:
+    source = _repo_items_path()
+    if not source.exists() and _external_items_path().exists():
+        source = _external_items_path()
+
+    data = json.loads(source.read_text())
+    out: list[GameItem] = []
+    for row in data:
+        value = int(row.get("value", 0) or 0)
+        out.append(
+            GameItem(
+                id=str(row.get("id") or row["name"]).strip(),
+                name=str(row.get("name") or row["id"]).strip(),
+                rarity=infer_rarity(row.get("rarity"), value),
+                type=str(row.get("type") or "component").strip().lower(),
+                value=value,
+                found_in=tuple(str(x).strip().lower() for x in (row.get("foundIn") or [])),
+                description=str(row.get("description") or ""),
+                icon=row.get("icon"),
+            )
+        )
+    return tuple(out)
+
+
+def filter_items_for_zone(zone: str) -> tuple[GameItem, ...]:
+    zone_tags = {
+        "Residential": {"residential", "commercial", "nature"},
+        "Industrial": {"industrial", "mechanical", "electrical", "technological", "medical"},
+        "ARC Site": {"arc"},
+    }
+    tags = zone_tags.get(zone, set())
+    items = load_items()
+    if not tags:
+        return items
+    filtered = tuple(item for item in items if set(item.found_in) & tags)
+    return filtered or items
