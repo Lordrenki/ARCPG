@@ -19,6 +19,7 @@ from arkpg.db.models import (
     User,
 )
 from arkpg.game.deployments import deployment_end, make_seed, resolve_deployment
+from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
 from arkpg.game.economy import compute_idle_rewards, level_from_xp
 from arkpg.game.loadout import as_item_payload, healing_amount, item_power_from_payload, shield_reduction
 from arkpg.game.progression import EventBus
@@ -251,6 +252,64 @@ def _apply_deployment_survivability(user: User, event_damage: int, payload: dict
 
 async def get_user_inventory_items(session: AsyncSession, user: User) -> list[tuple[Inventory, Item]]:
     return (await session.execute(select(Inventory, Item).join(Item, Inventory.item_id == Item.id).where(Inventory.user_id == user.id))).all()
+
+
+async def craft_item(session: AsyncSession, discord_id: int, item_id: int, qty: int = 1) -> dict:
+    if qty <= 0:
+        raise ValueError("Craft quantity must be positive.")
+
+    user = await get_or_create_user(session, discord_id)
+    item = await session.get(Item, item_id)
+    if item is None:
+        raise ValueError("Item not found.")
+    if not is_craftable_item(item):
+        raise ValueError("This item cannot be crafted.")
+
+    recipe = crafting_recipe_for_item(item)
+    source_items = (await session.execute(select(Item))).scalars().all()
+    source_map = {str((x.metadata_json or {}).get("source_id") or "").lower(): x for x in source_items}
+
+    required: list[tuple[Item, int]] = []
+    for source_id, amount in recipe:
+        material = source_map.get(source_id)
+        if material is None:
+            raise ValueError(f"Crafting material '{source_id}' is not available.")
+        required.append((material, amount * qty))
+
+    for material, required_qty in required:
+        inv = (
+            await session.execute(
+                select(Inventory).where(and_(Inventory.user_id == user.id, Inventory.item_id == material.id, Inventory.weapon_level.is_(None)))
+            )
+        ).scalar_one_or_none()
+        available = inv.qty if inv else 0
+        if available < required_qty:
+            raise ValueError(f"Missing materials: {material.name} x{required_qty} (have {available}).")
+
+    for material, required_qty in required:
+        inv = (
+            await session.execute(
+                select(Inventory).where(and_(Inventory.user_id == user.id, Inventory.item_id == material.id, Inventory.weapon_level.is_(None)))
+            )
+        ).scalar_one()
+        inv.qty -= required_qty
+        if inv.qty <= 0:
+            await session.delete(inv)
+
+    crafted_stack = (
+        await session.execute(select(Inventory).where(and_(Inventory.user_id == user.id, Inventory.item_id == item.id, Inventory.weapon_level.is_(None))))
+    ).scalar_one_or_none()
+    if crafted_stack:
+        crafted_stack.qty += qty
+    else:
+        session.add(Inventory(user_id=user.id, item_id=item.id, qty=qty))
+
+    await session.commit()
+    return {
+        "item": item,
+        "qty": qty,
+        "materials": [{"name": material.name, "qty": needed} for material, needed in required],
+    }
 
 
 async def equip_loadout_item(session: AsyncSession, discord_id: int, item_id: int, slot: str, weapon_index: int | None = None) -> tuple[User, dict]:

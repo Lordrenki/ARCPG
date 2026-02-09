@@ -27,9 +27,11 @@ from arkpg.db.models import (
 from arkpg.db.session import SessionLocal
 from arkpg.game.constants import RARITY_COLORS, ZONE_CONFIG
 from arkpg.game.progression import ActivityService, EventBus, ExpeditionService, QuestService, SeederService, TitleService
+from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
 from arkpg.game.service import (
     atomic_trade_confirm,
     claim_idle,
+    craft_item,
     equip_loadout_item,
     extract_deployment,
     get_equipped_loadout,
@@ -53,12 +55,23 @@ class GameplayCog(commands.Cog):
         embed.set_footer(text="ARCPG Alpha V.0.5")
         return embed
 
-    def _seed_note(self, seed: str) -> str:
-        return (
-            f"Seed `{seed}`\n"
-            "This seed is the deterministic random key generated at action start. "
-            "It drives loot/event rolls for that run so outcomes are reproducible for audits."
-        )
+    def _format_requirement(self, req: dict, progress: dict | None = None) -> str:
+        progress = progress or {}
+        current = progress.get("current", 0)
+        target = progress.get("target", req.get("count", "?"))
+        req_type = req.get("type")
+        if req_type == "activity_count":
+            return f"{req.get('activity', 'activity').title()} runs: {current}/{target}"
+        if req_type == "counter":
+            label = str(req.get("key", "counter")).replace("_", " ").title()
+            return f"{label}: {current}/{target}"
+        if req_type == "collect_rarity":
+            return f"Collect {req.get('rarity', 'item').title()} items: {current}/{target}"
+        if req_type == "collect_found_in":
+            return f"Collect {req.get('found_in', 'zone').title()} finds: {current}/{target}"
+        if req_type == "multi":
+            return " + ".join(self._format_requirement(sub, {}) for sub in req.get("all", []))
+        return f"Progress: {current}/{target}"
 
     @app_commands.command(description="Initialize your raider profile and open the quick-start guide.")
     async def start(self, interaction: discord.Interaction) -> None:
@@ -111,6 +124,7 @@ class GameplayCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Start a deployment.")
+    @app_commands.choices(zone=[app_commands.Choice(name=zone, value=zone) for zone in ZONE_CONFIG.keys()])
     async def deploy(self, interaction: discord.Interaction, zone: str) -> None:
         if zone not in ZONE_CONFIG:
             await interaction.response.send_message("Unknown zone. Choose Residential, Industrial, or ARC Site.", ephemeral=True)
@@ -397,7 +411,15 @@ class GameplayCog(commands.Cog):
             await QuestService(session).ensure_track(user)
             rows = (await session.execute(select(UserQuest, Quest).join(Quest, UserQuest.quest_id == Quest.id).where(and_(UserQuest.user_id == user.id, UserQuest.status == QuestStatus.ACTIVE)).order_by(Quest.chapter.asc(), Quest.order_index.asc()))).all()
         embed = self._styled_embed(title="Active Quests")
-        embed.description = "\n".join(f"• Ch{q.chapter}.{q.order_index} {q.name} — {uq.progress or {'current': 0, 'target': '?'}}" for uq, q in rows) or "No active quests."
+        if not rows:
+            embed.description = "No active quests."
+        else:
+            lines: list[str] = []
+            for uq, q in rows:
+                lines.append(f"• **Ch{q.chapter}.{q.order_index} {q.name}**")
+                lines.append(f"  Description: {q.description}")
+                lines.append(f"  Requirements: {self._format_requirement(q.requirements or {}, uq.progress or {})}")
+            embed.description = "\n".join(lines)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Run a short scavenge for small loot.")
@@ -411,7 +433,7 @@ class GameplayCog(commands.Cog):
             except ValueError as exc:
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
-        await interaction.response.send_message(f"{result.message}\n\n{self._seed_note(result.seed)}", ephemeral=True)
+        await interaction.response.send_message(result.message, ephemeral=True)
 
     @app_commands.command(description="Convert recyclables into scraps/materials.")
     async def salvage(self, interaction: discord.Interaction) -> None:
@@ -428,7 +450,7 @@ class GameplayCog(commands.Cog):
             except ValueError as exc:
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
-        await interaction.response.send_message(f"{result.message}\n\n{self._seed_note(result.seed)}", ephemeral=True)
+        await interaction.response.send_message(result.message, ephemeral=True)
 
     @app_commands.command(description="Take a timed courier job with risk/reward.")
     async def courier(self, interaction: discord.Interaction, stake: int) -> None:
@@ -444,7 +466,39 @@ class GameplayCog(commands.Cog):
             except ValueError as exc:
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
-        await interaction.response.send_message(f"{result.message} Net `{result.credits}`\n\n{self._seed_note(result.seed)}", ephemeral=True)
+        await interaction.response.send_message(f"{result.message} Net `{result.credits}`", ephemeral=True)
+
+    @app_commands.command(description="Show crafting requirements for an item.")
+    async def craft_info(self, interaction: discord.Interaction, item_id: int) -> None:
+        async with SessionLocal() as session:
+            item = await session.get(Item, item_id)
+            if item is None:
+                await interaction.response.send_message("Unknown item id.", ephemeral=True)
+                return
+            if not is_craftable_item(item):
+                await interaction.response.send_message("This item is not craftable.", ephemeral=True)
+                return
+            source_items = (await session.execute(select(Item))).scalars().all()
+            source_map = {str((x.metadata_json or {}).get("source_id") or "").lower(): x for x in source_items}
+            recipe = crafting_recipe_for_item(item)
+        embed = self._styled_embed(title=f"Crafting: {item.name}")
+        embed.description = "\n".join(
+            f"• {source_map[source_id].name if source_id in source_map else source_id} x{qty}" for source_id, qty in recipe
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(description="Craft a weapon, gadget/throwable, or healing item.")
+    async def craft(self, interaction: discord.Interaction, item_id: int, qty: int = 1) -> None:
+        async with SessionLocal() as session:
+            try:
+                result = await craft_item(session, interaction.user.id, item_id=item_id, qty=qty)
+            except ValueError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
+        embed = self._styled_embed(title="Crafting complete")
+        embed.add_field(name="Crafted", value=f"{result['item'].name} x{result['qty']}", inline=False)
+        embed.add_field(name="Materials Used", value="\n".join(f"• {m['name']} x{m['qty']}" for m in result["materials"]), inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Create a squad.")
     async def squad_create(self, interaction: discord.Interaction, name: str) -> None:
