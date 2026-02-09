@@ -9,7 +9,8 @@ from arkpg.game.progression import InventoryService
 from arkpg.game.service import get_or_create_user
 
 
-ADMIN_IDS = {927355923364720651}
+ADMIN_ROLE_ID = 927355923364720651
+ADMIN_GUILD_ID = 927355923314380901
 
 
 class AdminCog(commands.Cog):
@@ -17,7 +18,12 @@ class AdminCog(commands.Cog):
         self.bot = bot
 
     def is_admin(self, interaction: discord.Interaction) -> bool:
-        return interaction.user.id in ADMIN_IDS
+        if interaction.guild is None or interaction.guild.id != ADMIN_GUILD_ID:
+            return False
+        member = interaction.user if isinstance(interaction.user, discord.Member) else interaction.guild.get_member(interaction.user.id)
+        if member is None:
+            return False
+        return any(role.id == ADMIN_ROLE_ID for role in member.roles)
 
     @app_commands.command(description="Configure bot channels and multipliers.")
     async def config(self, interaction: discord.Interaction, announcement_channel: discord.TextChannel | None = None, log_channel: discord.TextChannel | None = None, economy_multiplier: app_commands.Range[float, 0.1, 5.0] = 1.0) -> None:

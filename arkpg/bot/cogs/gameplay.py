@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from pathlib import Path
 
 import discord
 from discord import app_commands
@@ -50,7 +51,9 @@ from arkpg.game.service import (
 )
 
 
-ADMIN_IDS = {927355923364720651}
+ADMIN_ROLE_ID = 927355923364720651
+ADMIN_GUILD_ID = 927355923314380901
+ADMIN_PROFILE_BACKGROUND_PATH = Path(__file__).resolve().parents[2] / "assets" / "admin_staff_team.png"
 
 
 class GameplayCog(commands.Cog):
@@ -62,7 +65,12 @@ class GameplayCog(commands.Cog):
 
 
     def _is_super_admin(self, interaction: discord.Interaction) -> bool:
-        return interaction.user.id in ADMIN_IDS
+        if interaction.guild is None or interaction.guild.id != ADMIN_GUILD_ID:
+            return False
+        member = interaction.user if isinstance(interaction.user, discord.Member) else interaction.guild.get_member(interaction.user.id)
+        if member is None:
+            return False
+        return any(role.id == ADMIN_ROLE_ID for role in member.roles)
 
     def _relative_time(self, dt: datetime) -> str:
         target = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
@@ -159,6 +167,12 @@ class GameplayCog(commands.Cog):
             try:
                 dep = await start_deployment(session, interaction.user.id, zone)
             except ValueError as exc:
+                if "active deployment" in str(exc).lower():
+                    user = await get_or_create_user(session, interaction.user.id)
+                    active_dep = (await session.execute(select(Deployment).where(and_(Deployment.user_id == user.id, Deployment.status.in_([DeploymentStatus.ACTIVE, DeploymentStatus.READY_TO_EXTRACT]))).order_by(Deployment.started_at.desc()))).scalar_one_or_none()
+                    if active_dep:
+                        await interaction.response.send_message(f"You already have an active deployment. Extraction available {self._relative_time(active_dep.ends_at)}.", ephemeral=True)
+                        return
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
 
@@ -174,6 +188,12 @@ class GameplayCog(commands.Cog):
             try:
                 outcome = await extract_deployment(session, interaction.user.id)
             except ValueError as exc:
+                if "still running" in str(exc).lower():
+                    user = await get_or_create_user(session, interaction.user.id)
+                    active_dep = (await session.execute(select(Deployment).where(and_(Deployment.user_id == user.id, Deployment.status.in_([DeploymentStatus.ACTIVE, DeploymentStatus.READY_TO_EXTRACT]))).order_by(Deployment.started_at.desc()))).scalar_one_or_none()
+                    if active_dep:
+                        await interaction.response.send_message(f"Deployment is still running. You can extract {self._relative_time(active_dep.ends_at)}.", ephemeral=True)
+                        return
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
         color = RARITY_COLORS.get(outcome["loot"][0]["rarity"], 0x95A5A6) if outcome["loot"] else 0x95A5A6
@@ -255,6 +275,7 @@ class GameplayCog(commands.Cog):
         gadget = (loadout.get("gadget") or {}).get("name", "None")
         healing = (loadout.get("healing") or {}).get("name", "None")
         background = get_background(str(profile["background_id"]))
+        is_admin = self._is_super_admin(interaction)
         card = await render_profile_card(
             interaction_user=interaction.user,
             callsign=str(profile["callsign"]),
@@ -271,6 +292,7 @@ class GameplayCog(commands.Cog):
             equipped_healing=str(healing),
             equipped_shield=str((loadout.get("shield") or {}).get("name", "None")),
             background=background,
+            admin_background_path=str(ADMIN_PROFILE_BACKGROUND_PATH) if is_admin else None,
         )
         file = discord.File(card, filename="profile-card.png")
         await interaction.response.send_message(file=file, ephemeral=True)
@@ -539,6 +561,7 @@ class GameplayCog(commands.Cog):
         embed.add_field(name="Scavenge", value=status.get("scavenge", "Ready now"), inline=True)
         embed.add_field(name="Salvage", value=status.get("salvage", "Ready now"), inline=True)
         embed.add_field(name="Courier", value=status.get("courier", "Ready now"), inline=True)
+        embed.add_field(name="Work", value=status.get("work", "Ready now"), inline=True)
         if active_dep:
             embed.add_field(name="Deployment", value=self._relative_time(active_dep.ends_at), inline=False)
         else:
@@ -590,6 +613,35 @@ class GameplayCog(commands.Cog):
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
         await interaction.response.send_message(f"{result.message} Net `{result.credits}`", ephemeral=True)
+
+    @app_commands.command(description="Work a random side job for credits.")
+    async def work(self, interaction: discord.Interaction) -> None:
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, interaction.user.id)
+            try:
+                result = await ActivityService(session).work(user)
+                await EventBus.emit(session, user, "WORK_COMPLETED", {"counter_updates": {"work_runs": 1, "activity_credits_earned": result.credits}})
+                await session.commit()
+            except ValueError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
+        await interaction.response.send_message(result.message, ephemeral=True)
+
+    @app_commands.command(description="Bet credits on a dice roll.")
+    async def dice(self, interaction: discord.Interaction, stake: app_commands.Range[int, 10, 100000]) -> None:
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, interaction.user.id)
+            try:
+                result = await ActivityService(session).dice(user, stake)
+                updates = {"gamble_runs": 1}
+                if result.credits > 0:
+                    updates["gamble_profit"] = result.credits
+                await EventBus.emit(session, user, "GAMBLE_DICE", {"counter_updates": updates})
+                await session.commit()
+            except ValueError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
+        await interaction.response.send_message(result.message, ephemeral=True)
 
     @app_commands.command(description="Show crafting requirements for an item.")
     async def craft_info(self, interaction: discord.Interaction, item_id: int) -> None:
