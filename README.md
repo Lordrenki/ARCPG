@@ -76,6 +76,16 @@ tests/
   - `/courier <stake>` (timed risk/reward credits run)
 - Unified EventBus updates quests and titles from emitted gameplay events.
 
+
+### D) Profile Cards + Collectible Backgrounds
+- `/profile` now renders a square image card with a dark bottom fade for readability.
+- Card includes avatar, callsign/title, stats, credits, bio, and an XP progress bar.
+- Users can only **collect and equip** curated backgrounds (no user uploads).
+- Commands:
+  - `/backgrounds_list`
+  - `/background_equip`
+  - Admin: `/background_grant`
+
 ## Items Seeding
 - Seeder uses `arkpg/db/items.json` for item metadata (falls back to `/mnt/data/items.json` in external-hosted setups).
 - Rarity normalization: `common/uncommon/rare/epic/legendary`, null/malformed rarity defaults to `common`.

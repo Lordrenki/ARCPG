@@ -21,6 +21,7 @@ from arkpg.db.models import (
 from arkpg.game.deployments import deployment_end, make_seed, resolve_deployment
 from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
 from arkpg.game.economy import compute_idle_rewards, level_from_xp
+from arkpg.game.profile_backgrounds import DEFAULT_BACKGROUND_ID, normalize_collected_background_ids
 from arkpg.game.loadout import as_item_payload, healing_amount, item_power_from_payload, shield_reduction
 from arkpg.game.progression import EventBus
 
@@ -362,18 +363,26 @@ async def get_equipped_loadout(session: AsyncSession, discord_id: int) -> tuple[
 
 
 
-def default_profile(discord_id: int) -> dict[str, str]:
+def default_profile(discord_id: int) -> dict[str, str | list[str]]:
     return {
         "callsign": f"Raider-{str(discord_id)[-4:]}",
         "bio": "No bio set yet.",
+        "background_id": DEFAULT_BACKGROUND_ID,
+        "collected_background_ids": [DEFAULT_BACKGROUND_ID],
     }
 
 
-def normalized_profile(user: User) -> dict[str, str]:
+def normalized_profile(user: User) -> dict[str, str | list[str]]:
     profile_data = user.stats.get("profile", {}) if isinstance(user.stats, dict) else {}
     profile = default_profile(user.discord_id)
     profile["callsign"] = str(profile_data.get("callsign", profile["callsign"]))[:32]
     profile["bio"] = str(profile_data.get("bio", profile["bio"]))[:220]
+    collected = normalize_collected_background_ids(profile_data.get("collected_background_ids"))
+    active_background = str(profile_data.get("background_id", DEFAULT_BACKGROUND_ID))
+    if active_background not in collected:
+        active_background = DEFAULT_BACKGROUND_ID
+    profile["collected_background_ids"] = collected
+    profile["background_id"] = active_background
     return profile
 
 
@@ -382,7 +391,8 @@ async def update_user_profile(
     discord_id: int,
     callsign: str | None = None,
     bio: str | None = None,
-) -> tuple[User, dict[str, str]]:
+    background_id: str | None = None,
+) -> tuple[User, dict[str, str | list[str]]]:
     user = await get_or_create_user(session, discord_id)
     profile = normalized_profile(user)
 
@@ -390,9 +400,37 @@ async def update_user_profile(
         profile["callsign"] = callsign.strip()[:32] or profile["callsign"]
     if bio is not None:
         profile["bio"] = bio.strip()[:220] or profile["bio"]
+    if background_id is not None:
+        collected = set(profile["collected_background_ids"] if isinstance(profile.get("collected_background_ids"), list) else [])
+        if background_id not in collected:
+            raise ValueError("You have not collected that background yet.")
+        profile["background_id"] = background_id
 
     stats = dict(user.stats) if isinstance(user.stats, dict) else {}
     stats["profile"] = profile
     user.stats = stats
     await session.commit()
     return user, profile
+
+
+async def collect_profile_background(session: AsyncSession, discord_id: int, background_id: str) -> tuple[User, dict[str, str | list[str]]]:
+    user = await get_or_create_user(session, discord_id)
+    profile = normalized_profile(user)
+    collected = set(profile["collected_background_ids"] if isinstance(profile.get("collected_background_ids"), list) else [])
+    collected.add(background_id)
+    profile["collected_background_ids"] = normalize_collected_background_ids(sorted(collected))
+
+    stats = dict(user.stats) if isinstance(user.stats, dict) else {}
+    stats["profile"] = profile
+    user.stats = stats
+    await session.commit()
+    return user, profile
+
+
+async def ensure_default_profile_backgrounds(session: AsyncSession, user: User) -> dict[str, str | list[str]]:
+    profile = normalized_profile(user)
+    stats = dict(user.stats) if isinstance(user.stats, dict) else {}
+    stats["profile"] = profile
+    user.stats = stats
+    await session.commit()
+    return profile
