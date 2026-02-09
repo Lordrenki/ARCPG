@@ -2,7 +2,16 @@ from datetime import datetime, timedelta, timezone
 
 
 def level_from_xp(xp: int) -> int:
-    return max(1, int((xp / 120) ** 0.62) + 1)
+    level = 1
+    while xp >= xp_for_level(level + 1):
+        level += 1
+    return level
+
+
+def xp_for_level(level: int) -> int:
+    if level <= 1:
+        return 0
+    return int(((level - 1) ** (1 / 0.62)) * 120)
 
 
 def compute_idle_rewards(

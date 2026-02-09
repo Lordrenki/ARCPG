@@ -1,11 +1,15 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-from sqlalchemy import delete, select
+from sqlalchemy import select
 
-from arkpg.db.models import AuditLog, GameConfig, User
+from arkpg.db.models import AuditLog, GameConfig, Item, User
 from arkpg.db.session import SessionLocal
+from arkpg.game.progression import InventoryService
 from arkpg.game.service import get_or_create_user
+
+
+ADMIN_IDS = {927355923364720651}
 
 
 class AdminCog(commands.Cog):
@@ -13,12 +17,12 @@ class AdminCog(commands.Cog):
         self.bot = bot
 
     def is_admin(self, interaction: discord.Interaction) -> bool:
-        return interaction.user.guild_permissions.manage_guild
+        return interaction.user.id in ADMIN_IDS
 
     @app_commands.command(description="Configure bot channels and multipliers.")
     async def config(self, interaction: discord.Interaction, announcement_channel: discord.TextChannel | None = None, log_channel: discord.TextChannel | None = None, economy_multiplier: app_commands.Range[float, 0.1, 5.0] = 1.0) -> None:
         if not self.is_admin(interaction):
-            await interaction.response.send_message("Missing Manage Server permission.", ephemeral=True)
+            await interaction.response.send_message("This admin command is restricted.", ephemeral=True)
             return
         if interaction.guild is None:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
@@ -37,7 +41,7 @@ class AdminCog(commands.Cog):
     @app_commands.command(description="Wipe a test user's game data.")
     async def wipe(self, interaction: discord.Interaction, target: discord.Member) -> None:
         if not self.is_admin(interaction):
-            await interaction.response.send_message("Missing Manage Server permission.", ephemeral=True)
+            await interaction.response.send_message("This admin command is restricted.", ephemeral=True)
             return
         async with SessionLocal() as session:
             user = (await session.execute(select(User).where(User.discord_id == target.id))).scalar_one_or_none()
@@ -50,12 +54,35 @@ class AdminCog(commands.Cog):
     @app_commands.command(description="Show suspicious activity events.")
     async def anti_exploit_log(self, interaction: discord.Interaction) -> None:
         if not self.is_admin(interaction):
-            await interaction.response.send_message("Missing Manage Server permission.", ephemeral=True)
+            await interaction.response.send_message("This admin command is restricted.", ephemeral=True)
             return
         async with SessionLocal() as session:
             rows = (await session.execute(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(10))).scalars().all()
         content = "\n".join(f"`{r.created_at}` {r.event_type} {r.payload}" for r in rows) or "No events."
         await interaction.response.send_message(content, ephemeral=True)
+
+    @app_commands.command(description="Admin: give yourself any item.")
+    async def give(self, interaction: discord.Interaction, item: str, qty: app_commands.Range[int, 1, 999] = 1) -> None:
+        if not self.is_admin(interaction):
+            await interaction.response.send_message("This admin command is restricted.", ephemeral=True)
+            return
+
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, interaction.user.id)
+            item_row = None
+            if item.isdigit():
+                item_row = await session.get(Item, int(item))
+            if item_row is None:
+                item_row = (await session.execute(select(Item).where(Item.name.ilike(item)).limit(1))).scalar_one_or_none()
+            if item_row is None:
+                await interaction.response.send_message("Item not found. Use exact name or ID.", ephemeral=True)
+                return
+
+            await InventoryService(session).add_item(user.id, item_row.id, qty)
+            session.add(AuditLog(event_type="admin_give", payload={"admin": interaction.user.id, "item_id": item_row.id, "qty": qty}))
+            await session.commit()
+
+        await interaction.response.send_message(f"Granted **{item_row.name} x{qty}** to yourself.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:
