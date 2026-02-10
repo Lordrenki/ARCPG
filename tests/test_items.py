@@ -4,7 +4,7 @@ from arkpg.game.items import filter_items_for_zone, infer_rarity, load_items
 def test_load_items_from_repo_db() -> None:
     items = load_items()
     assert len(items) > 50
-    assert any(i.name == "Acoustic Guitar" for i in items)
+    assert any(i.name == "Blue Light Stick" for i in items)
 
 
 def test_infer_rarity_fallback_from_value() -> None:

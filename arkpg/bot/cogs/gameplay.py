@@ -718,6 +718,22 @@ class GameplayCog(commands.Cog):
                 out.append(choice)
         return out
 
+    async def craftable_item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[int]]:
+        async with SessionLocal() as session:
+            rows = (await session.execute(select(Item).order_by(Item.name.asc()))).scalars().all()
+
+        needle = current.strip().lower()
+        picks: list[app_commands.Choice[int]] = []
+        for item in rows:
+            if not is_craftable_item(item):
+                continue
+            if needle and needle not in item.name.lower() and needle not in str(item.id):
+                continue
+            picks.append(app_commands.Choice(name=f"{item.name} (ID {item.id})", value=item.id))
+            if len(picks) >= 25:
+                break
+        return picks
+
     @app_commands.command(description="Equip an item from inventory to a loadout slot.")
     @app_commands.describe(slot="Slot to equip", item_id="Choose an item from your inventory", weapon_slot="Only used when slot is weapon")
     @app_commands.autocomplete(item_id=equip_item_autocomplete)
@@ -1242,6 +1258,7 @@ class GameplayCog(commands.Cog):
         await interaction.response.send_message(result.message)
 
     @app_commands.command(description="Show crafting requirements for an item.")
+    @app_commands.autocomplete(item_id=craftable_item_autocomplete)
     async def craft_info(self, interaction: discord.Interaction, item_id: int) -> None:
         async with SessionLocal() as session:
             item = await session.get(Item, item_id)
@@ -1298,6 +1315,7 @@ class GameplayCog(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(description="Craft a weapon, gadget/throwable, or healing item.")
+    @app_commands.autocomplete(item_id=craftable_item_autocomplete)
     async def craft(self, interaction: discord.Interaction, item_id: int, qty: int = 1) -> None:
         async with SessionLocal() as session:
             try:
