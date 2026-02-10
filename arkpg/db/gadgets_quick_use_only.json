@@ -1,0 +1,228 @@
+[
+  {
+    "id": "blue_light_stick",
+    "name": "Blue Light Stick",
+    "description": "A throwable chemical light that illuminates the area around it.",
+    "rarity": "common",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 150,
+    "icon": "/items/icons/blue_light_stick.webp",
+    "updatedAt": "2025-10-20T11:29:16.330Z"
+  },
+  {
+    "id": "firecracker",
+    "name": "Firecracker",
+    "description": "A device that sparks and pops in a pleasant manner.",
+    "rarity": "common",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 270,
+    "updatedAt": "2025-12-16T14:15:35.319Z"
+  },
+  {
+    "id": "gas_grenade",
+    "name": "Gas Grenade",
+    "description": "A grenade that emits a lingering toxic cloud on impact, draining the stamina of any Raider within its area of effect.",
+    "rarity": "common",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 270,
+    "icon": "/items/icons/gas_grenade.webp",
+    "updatedAt": "2025-11-01T23:55:46.013Z"
+  },
+  {
+    "id": "gas_mine",
+    "name": "Gas Mine",
+    "description": "A proximity-triggered mine that pops up and deploys a gas cloud that rapidly drains stamina.",
+    "rarity": "common",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 270,
+    "icon": "/items/icons/gas_mine.webp",
+    "updatedAt": "2025-12-16T17:55:05.634Z"
+  },
+  {
+    "id": "green_light_stick",
+    "name": "Green Light Stick",
+    "description": "A throwable chemical light that illuminates the area around it.",
+    "rarity": "common",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 150,
+    "icon": "/items/icons/green_light_stick.webp",
+    "updatedAt": "2025-10-26T12:34:06.331Z"
+  },
+  {
+    "id": "jolt_mine",
+    "name": "Jolt Mine",
+    "description": "A proximity-triggered mine that pops up and stuns anything within its radius.",
+    "rarity": "rare",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 850,
+    "icon": "/items/icons/jolt_mine.webp",
+    "updatedAt": "2025-11-06T02:02:11.906Z"
+  },
+  {
+    "id": "lil_smoke_grenade",
+    "name": "Li'l Smoke Grenade",
+    "description": "A grenade that pops a thick but small smoke cloud on impact, blocking visibility from ARC and other Raiders.",
+    "rarity": "common",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 300,
+    "icon": "/items/icons/lil_smoke_grenade.webp",
+    "updatedAt": "2025-10-20T11:29:16.330Z"
+  },
+  {
+    "id": "looting_mk3_safekeeper",
+    "name": "Looting Mk. 3 (Safekeeper)",
+    "description": "A looting augment that trades weight and utility for increased looting potential.",
+    "rarity": "epic",
+    "type": "augment",
+    "foundIn": [],
+    "value": 5000,
+    "updatedAt": "2026-01-27T15:55:21.472Z"
+  },
+  {
+    "id": "lure_grenade",
+    "name": "Lure Grenade",
+    "description": "A noisy device that sticks to surfaces, distracting nearby ARC machines and drawing their fire.",
+    "rarity": "uncommon",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 1000,
+    "icon": "/items/icons/lure_grenade.webp",
+    "updatedAt": "2025-11-13T20:51:07.820Z"
+  },
+  {
+    "id": "noisemaker",
+    "name": "Noisemaker",
+    "description": "A deployable proximity sensor that sounds an alarm when enemy raiders are detected.",
+    "rarity": "common",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 640,
+    "icon": "/items/icons/noisemaker.webp",
+    "updatedAt": "2025-10-20T11:29:16.330Z"
+  },
+  {
+    "id": "red_light_stick",
+    "name": "Red Light Stick",
+    "description": "A throwable chemical light that illuminates the area around it.",
+    "rarity": "common",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 150,
+    "updatedAt": "2025-10-23T12:37:58.471Z"
+  },
+  {
+    "id": "remote_raider_flare",
+    "name": "Remote Raider Flare",
+    "description": "A deployable device that, when manually triggered, launches a Raider Distress Flare.",
+    "rarity": "uncommon",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 270,
+    "icon": "/items/icons/remote_raider_flare.webp",
+    "updatedAt": "2025-10-20T11:29:16.330Z"
+  },
+  {
+    "id": "shield_recharger",
+    "name": "Shield Recharger",
+    "description": "A handheld repair kit that recharges a shield on use.",
+    "rarity": "uncommon",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 520,
+    "icon": "/items/icons/shield_recharger.webp",
+    "updatedAt": "2025-10-20T11:29:16.330Z"
+  },
+  {
+    "id": "showstopper",
+    "name": "Showstopper",
+    "description": "A grenade that detonates after a delay, stunning enemies within its radius.",
+    "rarity": "rare",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 2200,
+    "icon": "/items/icons/showstopper.webp",
+    "updatedAt": "2025-10-20T11:29:16.330Z"
+  },
+  {
+    "id": "shrapnel_grenade",
+    "name": "Shrapnel Grenade",
+    "description": "A makeshift fuze grenade that bursts into razor-sharp fragments upon detonation.",
+    "rarity": "uncommon",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 800,
+    "icon": "/items/icons/shrapnel_grenade.webp",
+    "updatedAt": "2025-11-01T23:55:46.013Z"
+  },
+  {
+    "id": "smoke_grenade",
+    "name": "Smoke Grenade",
+    "description": "A grenade that creates a lingering smoke cloud on impact, blocking visibility from ARC and other Raiders.",
+    "rarity": "rare",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 1000,
+    "icon": "/items/icons/smoke_grenade.webp",
+    "updatedAt": "2025-11-18T16:52:38.386Z"
+  },
+  {
+    "id": "surge_shield_recharger",
+    "name": "Surge Shield Recharger",
+    "rarity": "rare",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 1200,
+    "icon": "/items/icons/surge_shield_recharger.webp",
+    "updatedAt": "2025-10-20T11:29:16.330Z"
+  },
+  {
+    "id": "tagging_grenade",
+    "name": "Tagging Grenade",
+    "description": "A grenade that detonates after a delay, tagging Raiders and ARC enemies in an area, allowing you to briefly track their location.",
+    "rarity": "rare",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 1000,
+    "icon": "/items/icons/tagging_grenade.webp",
+    "updatedAt": "2025-10-20T11:29:16.330Z"
+  },
+  {
+    "id": "trailblazer",
+    "name": "Trailblazer",
+    "description": "A grenade that emits a trail of flammable gas along its path, causing an explosive chain reaction when it ignites.",
+    "rarity": "rare",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 1600,
+    "icon": "/items/icons/trailblazer.webp",
+    "updatedAt": "2025-12-16T17:55:05.634Z"
+  },
+  {
+    "id": "yellow_light_stick",
+    "name": "Yellow Light Stick",
+    "description": "A throwable chemical light that illuminates the area around it.",
+    "rarity": "common",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 150,
+    "updatedAt": "2025-10-26T12:34:06.331Z"
+  },
+  {
+    "id": "zipline",
+    "name": "Zipline",
+    "description": "A deployable zipline that allows you to quickly move between two locations.",
+    "rarity": "rare",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 1000,
+    "icon": "/items/icons/zipline.webp",
+    "updatedAt": "2025-11-07T12:46:10.427Z"
+  }
+]

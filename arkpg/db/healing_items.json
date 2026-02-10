@@ -1,0 +1,205 @@
+[
+  {
+    "id": "adrenaline_shot",
+    "name": "Adrenaline Shot",
+    "description": "A serum that fully restores stamina and temporarily increases stamina regeneration.",
+    "rarity": "common",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 300,
+    "icon": "/items/icons/adrenaline_shot.webp",
+    "updatedAt": "2025-10-20T11:29:16.330Z"
+  },
+  {
+    "id": "agave",
+    "name": "Agave",
+    "description": "A piece of an agave leaf. Can be used to regain a small amount of health.",
+    "rarity": null,
+    "type": "nature",
+    "foundIn": [
+      "nature"
+    ],
+    "value": 1000,
+    "icon": "/items/icons/agave.webp",
+    "updatedAt": "2025-10-20T11:29:16.330Z"
+  },
+  {
+    "id": "agave_juice",
+    "name": "Agave Juice",
+    "description": "A concoction that temporarily increases stamina regeneration, at a small initial cost to health.",
+    "rarity": null,
+    "type": "quick use",
+    "foundIn": [],
+    "value": 0,
+    "updatedAt": "2025-09-07T17:18:28.842Z"
+  },
+  {
+    "id": "bandage",
+    "name": "Bandage",
+    "description": "A medical item that gradually restores health over time.",
+    "rarity": "common",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 250,
+    "icon": "/items/icons/bandage.webp",
+    "updatedAt": "2025-10-20T11:29:16.330Z"
+  },
+  {
+    "id": "defibrillator",
+    "name": "Defibrillator",
+    "description": "An injection that quickly revives downed raiders and restores some health.",
+    "rarity": "rare",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 1000,
+    "icon": "/items/icons/defibrillator.webp",
+    "updatedAt": "2025-12-15T03:34:10.028Z"
+  },
+  {
+    "id": "defibrillator_blueprint",
+    "name": "Defibrillator Blueprint",
+    "description": "An injection that quickly revives downed raiders and restores some health.",
+    "rarity": null,
+    "type": "blueprint",
+    "foundIn": [],
+    "value": 5000,
+    "icon": "/items/icons/recipe.webp",
+    "updatedAt": "2025-11-16T14:30:39.690Z"
+  },
+  {
+    "id": "fruit_mix",
+    "name": "Fruit Mix",
+    "description": "A food item that moderately increases both health and stamina.",
+    "rarity": null,
+    "type": "quick use",
+    "foundIn": [],
+    "value": 0,
+    "updatedAt": "2025-09-07T17:18:28.842Z"
+  },
+  {
+    "id": "herbal_bandage",
+    "name": "Herbal Bandage",
+    "description": "An improvised medical item that gradually restores health over time.",
+    "rarity": "uncommon",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 640,
+    "icon": "/items/icons/herbal_bandage.webp",
+    "updatedAt": "2025-11-02T15:49:03.083Z"
+  },
+  {
+    "id": "moss",
+    "name": "Moss",
+    "description": "Can be used to regain a small amount of health.",
+    "rarity": "rare",
+    "type": "topside material",
+    "foundIn": [
+      "nature"
+    ],
+    "value": 500,
+    "icon": "/items/icons/moss.webp",
+    "updatedAt": "2025-10-26T12:34:06.331Z"
+  },
+  {
+    "id": "mushroom",
+    "name": "Mushroom",
+    "description": "Can be consumed to regain a small amount of health.",
+    "rarity": "uncommon",
+    "type": "nature",
+    "foundIn": [
+      "nature"
+    ],
+    "value": 1000,
+    "icon": "/items/icons/mushroom.webp",
+    "updatedAt": "2025-11-29T18:20:47.734Z"
+  },
+  {
+    "id": "resin",
+    "name": "Resin",
+    "description": "Can be used to gradually restore a small amount of health over time.",
+    "rarity": null,
+    "type": "nature",
+    "foundIn": [
+      "nature"
+    ],
+    "value": 0,
+    "updatedAt": "2025-10-20T11:29:16.330Z"
+  },
+  {
+    "id": "sterilized_bandage",
+    "name": "Sterilized Bandage",
+    "description": "A medical item that gradually restores a large amount of health over time.",
+    "rarity": "rare",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 2000,
+    "icon": "/items/icons/sterilized_bandage.webp",
+    "updatedAt": "2025-10-20T11:29:16.330Z"
+  },
+  {
+    "id": "tactical_mk3_healing",
+    "name": "Tactical Mk. 3 (Healing)",
+    "description": "A healing-focused augment which adds extra slots for healing items.",
+    "rarity": "epic",
+    "type": "augment",
+    "foundIn": [],
+    "value": 5000,
+    "icon": "/items/icons/tactical_mk3_healing.webp",
+    "updatedAt": "2025-11-01T20:45:34.760Z"
+  },
+  {
+    "id": "tactical_mk3_healing_blueprint",
+    "name": "Tactical Mk. 3 (Healing) Blueprint",
+    "description": "A healing-focused augment which adds extra slots for healing items.",
+    "rarity": null,
+    "type": "blueprint",
+    "foundIn": [],
+    "value": 5000,
+    "icon": "/items/icons/recipe.webp",
+    "updatedAt": "2025-11-16T14:30:39.690Z"
+  },
+  {
+    "id": "vita_shot",
+    "name": "Vita Shot",
+    "description": "A medical item that restores a large amount of health.",
+    "rarity": "rare",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 2000,
+    "icon": "/items/icons/vita_shot.webp",
+    "updatedAt": "2025-11-07T12:46:10.427Z"
+  },
+  {
+    "id": "vita_shot_blueprint",
+    "name": "Vita Shot Blueprint",
+    "description": "A medical item that restores a large amount of health.",
+    "rarity": null,
+    "type": "blueprint",
+    "foundIn": [],
+    "value": 5000,
+    "icon": "/items/icons/recipe.webp",
+    "updatedAt": "2025-11-16T14:30:39.690Z"
+  },
+  {
+    "id": "vita_spray",
+    "name": "Vita Spray",
+    "description": "A medical item that continuously restores health during use. Can be used on yourself or your allies.",
+    "rarity": "epic",
+    "type": "quick use",
+    "foundIn": [],
+    "value": 9000,
+    "icon": "/items/icons/vita_spray.webp",
+    "updatedAt": "2025-10-29T18:50:43.171Z"
+  },
+  {
+    "id": "vita_spray_blueprint",
+    "name": "Vita Spray Blueprint",
+    "description": "A medical item that continuously restores health during use. Can be used on yourself or your allies.",
+    "rarity": null,
+    "type": "blueprint",
+    "foundIn": [],
+    "value": 5000,
+    "icon": "/items/icons/recipe.webp",
+    "updatedAt": "2025-11-16T14:30:39.690Z"
+  }
+]
