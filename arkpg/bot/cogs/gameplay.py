@@ -1527,7 +1527,7 @@ class GameplayCog(commands.Cog):
             src = await get_or_create_user(session, interaction.user.id)
             dst = await get_or_create_user(session, target.id)
             existing_pending = (
-                await session.execute(select(Trade).where(Trade.status == TradeStatus.PENDING))
+                await session.execute(select(Trade).where(Trade.status == TradeStatus.PENDING).limit(1))
             ).scalar_one_or_none()
             if existing_pending is not None:
                 await interaction.response.send_message("Only one pending trade is allowed at a time.", ephemeral=True)
