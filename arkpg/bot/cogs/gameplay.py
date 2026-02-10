@@ -3,6 +3,7 @@ import asyncio
 from pathlib import Path
 import random
 from typing import Literal
+from uuid import uuid4
 
 import discord
 from discord import app_commands
@@ -31,6 +32,7 @@ from arkpg.db.models import (
     User,
     UserExpeditionState,
     GameConfig,
+    AuditLog,
     UserQuest,
     UserTitle,
 )
@@ -63,6 +65,15 @@ ADMIN_ROLE_ID = 927355923364720651
 ADMIN_GUILD_ID = 927355923314380901
 ADMIN_PROFILE_BACKGROUND_PATH = Path(__file__).resolve().parents[2] / "assets" / "admin_staff_team.png"
 DUEL_COOLDOWN_SECONDS = 300
+TRADE_REF_KEY = "trade_ref"
+
+
+def _trade_ref(trade: Trade) -> str:
+    requested = trade.requested or {}
+    ref = str(requested.get(TRADE_REF_KEY) or "").strip()
+    if ref:
+        return ref
+    return f"legacy-{trade.id}"
 
 
 def _trade_summary(trade: Trade) -> str:
@@ -105,8 +116,10 @@ class _TradeAmountModal(discord.ui.Modal, title="Add Trade Credits"):
             requested = dict(trade.requested or {})
             requested["credits"] = int(requested.get("credits", 0) or 0) + delta
             trade.requested = requested
+            actor = await get_or_create_user(session, interaction.user.id)
+            session.add(AuditLog(event_type="trade_updated", payload={"trade_ref": _trade_ref(trade), "trade_db_id": trade.id, "actor_discord_id": actor.discord_id, "change": {"requested_credits_delta": delta}}))
             await session.commit()
-        await interaction.response.edit_message(content=f"Trade #{self.trade_id} updated.\n{_trade_summary(trade)}")
+        await interaction.response.edit_message(content=f"Trade {_trade_ref(trade)} updated.\n{_trade_summary(trade)}")
 
 
 class _TradeItemModal(discord.ui.Modal, title="Add Trade Item Request"):
@@ -140,8 +153,10 @@ class _TradeItemModal(discord.ui.Modal, title="Add Trade Item Request"):
             requested["item_id"] = item_id
             requested["item_qty"] = qty
             trade.requested = requested
+            actor = await get_or_create_user(session, interaction.user.id)
+            session.add(AuditLog(event_type="trade_updated", payload={"trade_ref": _trade_ref(trade), "trade_db_id": trade.id, "actor_discord_id": actor.discord_id, "change": {"requested_item_id": item_id, "requested_item_qty": qty}}))
             await session.commit()
-        await interaction.response.edit_message(content=f"Trade #{self.trade_id} updated.\n{_trade_summary(trade)}")
+        await interaction.response.edit_message(content=f"Trade {_trade_ref(trade)} updated.\n{_trade_summary(trade)}")
 
 
 class TradeOfferView(discord.ui.View):
@@ -165,12 +180,17 @@ class TradeOfferView(discord.ui.View):
             await interaction.response.send_message("Only the trade target can accept this trade.", ephemeral=True)
             return
         async with SessionLocal() as session:
+            trade = await session.get(Trade, self.trade_id)
+            if trade is None:
+                await interaction.response.send_message("Trade is unavailable.", ephemeral=True)
+                return
+            trade_ref = _trade_ref(trade)
             try:
                 await atomic_trade_confirm(session, self.trade_id)
             except ValueError as exc:
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
-        await interaction.response.edit_message(content=f"Trade #{self.trade_id} confirmed.", view=None)
+        await interaction.response.edit_message(content=f"Trade {trade_ref} confirmed.", view=None)
 
     @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger)
     async def deny(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
@@ -183,8 +203,9 @@ class TradeOfferView(discord.ui.View):
                 await interaction.response.send_message("Trade is no longer pending.", ephemeral=True)
                 return
             trade.status = TradeStatus.CANCELLED
+            session.add(AuditLog(event_type="trade_denied", payload={"trade_ref": _trade_ref(trade), "trade_db_id": trade.id, "denied_by_discord_id": interaction.user.id}))
             await session.commit()
-        await interaction.response.edit_message(content=f"Trade #{self.trade_id} denied.", view=None)
+        await interaction.response.edit_message(content=f"Trade {_trade_ref(trade)} denied.", view=None)
 
 
 
@@ -1527,26 +1548,59 @@ class GameplayCog(commands.Cog):
             src = await get_or_create_user(session, interaction.user.id)
             dst = await get_or_create_user(session, target.id)
             existing_pending = (
-                await session.execute(select(Trade).where(Trade.status == TradeStatus.PENDING).limit(1))
+                await session.execute(
+                    select(Trade).where(
+                        and_(
+                            Trade.status == TradeStatus.PENDING,
+                            (Trade.from_user.in_([src.id, dst.id]) | Trade.to_user.in_([src.id, dst.id])),
+                        )
+                    ).limit(1)
+                )
             ).scalar_one_or_none()
             if existing_pending is not None:
-                await interaction.response.send_message("Only one pending trade is allowed at a time.", ephemeral=True)
+                await interaction.response.send_message(
+                    f"A pending trade already exists for one of the players in this trade ({_trade_ref(existing_pending)}).",
+                    ephemeral=True,
+                )
                 return
+            requested[TRADE_REF_KEY] = str(uuid4())
             trade_row = Trade(from_user=src.id, to_user=dst.id, offered=offered, requested=requested, status=TradeStatus.PENDING)
             session.add(trade_row)
+            await session.flush()
+            session.add(
+                AuditLog(
+                    event_type="trade_created",
+                    payload={
+                        "trade_ref": requested[TRADE_REF_KEY],
+                        "trade_db_id": trade_row.id,
+                        "from_discord_id": interaction.user.id,
+                        "to_discord_id": target.id,
+                        "offered": offered,
+                        "requested": requested,
+                    },
+                )
+            )
             await session.commit()
         view = TradeOfferView(trade_id=trade_row.id, sender_discord_id=interaction.user.id, target_discord_id=target.id)
-        await interaction.response.send_message(f"Trade #{trade_row.id} sent to {target.mention}.", ephemeral=True)
+        await interaction.response.send_message(f"Trade {_trade_ref(trade_row)} sent to {target.mention}.", ephemeral=True)
         await interaction.channel.send(
-            f"Trade #{trade_row.id} started by {interaction.user.mention} for {target.mention}.\n{_trade_summary(trade_row)}",
+            f"Trade {_trade_ref(trade_row)} started by {interaction.user.mention} for {target.mention}.\n{_trade_summary(trade_row)}",
             view=view,
             allowed_mentions=discord.AllowedMentions(users=True),
         )
 
-    @app_commands.command(description="Confirm a trade by ID.")
-    async def trade_confirm(self, interaction: discord.Interaction, trade_id: int) -> None:
+    @app_commands.command(description="Confirm a trade by trade reference ID.")
+    async def trade_confirm(self, interaction: discord.Interaction, trade_ref: str) -> None:
+        trade_ref = trade_ref.strip()
+        if not trade_ref:
+            await interaction.response.send_message("Provide a trade reference ID.", ephemeral=True)
+            return
         async with SessionLocal() as session:
-            trade = (await session.execute(select(Trade).where(Trade.id == trade_id))).scalar_one_or_none()
+            trade = (
+                await session.execute(
+                    select(Trade).where(Trade.requested[TRADE_REF_KEY].as_string() == trade_ref)
+                )
+            ).scalar_one_or_none()
             if trade is None:
                 await interaction.response.send_message("Trade not found.", ephemeral=True)
                 return
@@ -1555,12 +1609,13 @@ class GameplayCog(commands.Cog):
                 await interaction.response.send_message("Only the trade target can confirm this trade.", ephemeral=True)
                 return
             try:
-                await atomic_trade_confirm(session, trade_id)
+                await atomic_trade_confirm(session, trade.id)
                 await EventBus.emit(session, actor, "TRADE_COMPLETED", {"counter_updates": {"trade_completed": 1}})
+                await session.commit()
             except ValueError as exc:
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
-        await interaction.response.send_message(f"Trade #{trade_id} confirmed.", ephemeral=True)
+        await interaction.response.send_message(f"Trade {trade_ref} confirmed.", ephemeral=True)
 
     @app_commands.command(description="Cancel your currently pending outgoing trade.")
     async def canceltrade(self, interaction: discord.Interaction) -> None:
@@ -1577,8 +1632,18 @@ class GameplayCog(commands.Cog):
                 await interaction.response.send_message("You have no pending outgoing trade to cancel.", ephemeral=True)
                 return
             trade.status = TradeStatus.CANCELLED
+            session.add(
+                AuditLog(
+                    event_type="trade_cancelled",
+                    payload={
+                        "trade_ref": _trade_ref(trade),
+                        "trade_db_id": trade.id,
+                        "cancelled_by_discord_id": interaction.user.id,
+                    },
+                )
+            )
             await session.commit()
-        await interaction.response.send_message(f"Trade #{trade.id} cancelled.", ephemeral=True)
+        await interaction.response.send_message(f"Trade {_trade_ref(trade)} cancelled.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:

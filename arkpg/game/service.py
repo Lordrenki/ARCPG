@@ -312,6 +312,20 @@ async def atomic_trade_confirm(session: AsyncSession, trade_id: int) -> Trade:
     await transfer_item(dst.id, src.id, trade.requested or {}, "Target")
 
     trade.status = TradeStatus.CONFIRMED
+    requested = trade.requested or {}
+    session.add(
+        AuditLog(
+            event_type="trade_confirmed",
+            payload={
+                "trade_ref": str(requested.get("trade_ref") or f"legacy-{trade.id}"),
+                "trade_db_id": trade.id,
+                "from_user_id": trade.from_user,
+                "to_user_id": trade.to_user,
+                "offered": trade.offered or {},
+                "requested": requested,
+            },
+        )
+    )
     await session.commit()
     return trade
 
