@@ -36,3 +36,23 @@ def test_weapon_tier_blueprints_include_base_weapon_blueprint() -> None:
 
     assert "tempest_blueprint" in _blueprint_source_ids_for_item(tier_one)
     assert "tempest_blueprint" in _blueprint_source_ids_for_item(tier_four)
+
+
+def test_weapon_mark_tiers_increase_recipe_requirements() -> None:
+    mk1 = _item("stitcher", "smg", ItemType.WEAPON, Rarity.COMMON)
+    mk2 = _item("stitcher_t2", "smg", ItemType.WEAPON, Rarity.COMMON)
+    mk3 = _item("stitcher_t3", "smg", ItemType.WEAPON, Rarity.COMMON)
+    mk4 = _item("stitcher_t4", "smg", ItemType.WEAPON, Rarity.COMMON)
+
+    r1 = dict(crafting_recipe_for_item(mk1))
+    r2 = dict(crafting_recipe_for_item(mk2))
+    r3 = dict(crafting_recipe_for_item(mk3))
+    r4 = dict(crafting_recipe_for_item(mk4))
+
+    assert r2["light_gun_parts"] > r1["light_gun_parts"]
+    assert r3["light_gun_parts"] > r2["light_gun_parts"]
+    assert r4["light_gun_parts"] > r3["light_gun_parts"]
+
+    assert "electrical_components" in r2
+    assert "arc_alloy" in r3
+    assert "advanced_mechanical_components" in r4
