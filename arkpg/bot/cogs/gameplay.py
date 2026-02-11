@@ -675,22 +675,47 @@ class GameplayCog(commands.Cog):
             if (cmd.description or "").lower().startswith("admin:"):
                 continue
             commands_list.append(cmd)
+
         entries = sorted(
             [(f"/{cmd.qualified_name}", cmd.description or "No description available.") for cmd in commands_list],
             key=lambda x: x[0],
         )
 
-        per_page = 10
         pages: list[discord.Embed] = []
+        intro = self._styled_embed(title="✨ ARCPG Command Center ✨", color=0xB23A48)
+        intro.description = (
+            "```ansi\n\u001b[1;31mWELCOME, RAIDER\u001b[0m\n\u001b[0;37mYour tactical command index is online.\u001b[0m\n```\n"
+            "Use the buttons below to browse every command."
+        )
+        intro.add_field(
+            name="🔥 What's New",
+            value=(
+                "• `/salvage item:<name>` now lets you choose from your inventory with type-ahead autocomplete.\n"
+                "• `/profile` now displays publicly whether you inspect yourself or another raider.\n"
+                "• Weapon crafting for I–IV tiers now scales material requirements by mark tier."
+            ),
+            inline=False,
+        )
+        intro.add_field(
+            name="🎯 Quick Start",
+            value="`/start` • `/deploy` • `/extract` • `/claim` • `/loadout`",
+            inline=False,
+        )
+        intro.set_footer(text="ARCPG Alpha V.0.5 • Page 1")
+        pages.append(intro)
+
+        per_page = 8
+        total_pages = 1 + max(1, (len(entries) + per_page - 1) // per_page)
         for idx in range(0, len(entries), per_page):
             chunk = entries[idx : idx + per_page]
-            embed = self._styled_embed(title="ARCPG Command Guide")
-            embed.description = "\n".join(f"`{name}` — {description}" for name, description in chunk)
-            embed.set_footer(text=f"ARCPG Alpha V.0.5 • Page {idx // per_page + 1}/{max(1, (len(entries) + per_page - 1) // per_page)}")
+            embed = self._styled_embed(title="📘 Command Index", color=0x7A1F2B)
+            embed.description = "\n".join(f"`{name}`\n↳ {description}" for name, description in chunk)
+            page_no = 2 + (idx // per_page)
+            embed.set_footer(text=f"ARCPG Alpha V.0.5 • Page {page_no}/{total_pages}")
             pages.append(embed)
 
-        if not pages:
-            pages.append(self._styled_embed(title="ARCPG Command Guide", description="No commands available."))
+        if len(pages) == 1 and not entries:
+            pages.append(self._styled_embed(title="📘 Command Index", description="No commands available."))
 
         view = PaginatedEmbedView(owner_id=interaction.user.id, pages=pages)
         await interaction.response.send_message(embed=view.current_embed(), view=view, ephemeral=True)
@@ -1003,6 +1028,32 @@ class GameplayCog(commands.Cog):
                 break
         return picks
 
+    async def salvage_item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, interaction.user.id)
+            rows = (
+                await session.execute(
+                    select(Inventory, Item)
+                    .join(Item, Inventory.item_id == Item.id)
+                    .where(and_(Inventory.user_id == user.id, Inventory.weapon_level.is_(None), Inventory.qty > 0))
+                    .order_by(Item.name.asc())
+                )
+            ).all()
+
+        needle = current.strip().lower()
+        picks: list[app_commands.Choice[str]] = []
+        for inv, item in rows:
+            source_id = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
+            if not source_id:
+                continue
+            haystack = f"{item.name} {source_id}".lower()
+            if needle and needle not in haystack:
+                continue
+            picks.append(app_commands.Choice(name=f"{item.name} x{inv.qty}", value=source_id))
+            if len(picks) >= 25:
+                break
+        return picks
+
     async def craftable_item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[int]]:
         async with SessionLocal() as session:
             rows = (await session.execute(select(Item).order_by(Item.name.asc()))).scalars().all()
@@ -1120,7 +1171,7 @@ class GameplayCog(commands.Cog):
             admin_background_path=str(ADMIN_PROFILE_BACKGROUND_PATH) if is_admin else None,
         )
         file = discord.File(card, filename="profile-card.png")
-        await interaction.response.send_message(file=file, ephemeral=(member is None))
+        await interaction.response.send_message(file=file, ephemeral=False)
 
     @app_commands.command(description="Open a private profile editor with buttons and menus.")
     async def editprofile(self, interaction: discord.Interaction) -> None:
@@ -1484,11 +1535,13 @@ class GameplayCog(commands.Cog):
         await interaction.response.send_message(result.message)
 
     @app_commands.command(description="Convert recyclables into scraps/materials.")
-    async def salvage(self, interaction: discord.Interaction) -> None:
+    @app_commands.describe(item="Pick an inventory item to salvage (autocomplete enabled)")
+    @app_commands.autocomplete(item=salvage_item_autocomplete)
+    async def salvage(self, interaction: discord.Interaction, item: str | None = None) -> None:
         async with SessionLocal() as session:
             user = await get_or_create_user(session, interaction.user.id)
             try:
-                result = await ActivityService(session).salvage(user)
+                result = await ActivityService(session).salvage(user, source_id=item)
                 update = {"salvage_runs": 1, "scrapped": 1, "activity_credits_earned": result.credits}
                 if result.items:
                     update["salvage_refined_hits"] = 1

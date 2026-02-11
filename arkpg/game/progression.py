@@ -331,14 +331,38 @@ class ActivityService:
         self.session.add(ActivityAttempt(user_id=user.id, activity_type="scavenge", seed=seed, result={"item_id": picked.id, "qty": qty, "credits": credits, "event": event}))
         return ActivityResult(seed, True, credits, [(picked.id, qty)], f"Recovered {picked.name} x{qty} ({event}).")
 
-    async def salvage(self, user: User) -> ActivityResult:
+    async def salvage(self, user: User, source_id: str | None = None) -> ActivityResult:
         await self._check_cd(user.id, "salvage", 60)
         seed = await self._seed(user.id, "salvage")
         rng = random.Random(seed)
-        inv = (await self.session.execute(select(Inventory, Item).join(Item, Inventory.item_id == Item.id).where(Inventory.user_id == user.id).limit(1))).first()
-        if not inv:
+        inv_rows = (
+            await self.session.execute(
+                select(Inventory, Item)
+                .join(Item, Inventory.item_id == Item.id)
+                .where(Inventory.user_id == user.id)
+                .order_by(Item.name.asc())
+            )
+        ).all()
+        if not inv_rows:
             raise ValueError("Need at least one item to salvage.")
-        inv_row, item = inv
+
+        target_row: tuple[Inventory, Item] | None = None
+        normalized_source_id = str(source_id or "").strip().lower()
+        if normalized_source_id:
+            target_row = next(
+                (
+                    row
+                    for row in inv_rows
+                    if str((row[1].metadata_json or {}).get("source_id") or "").strip().lower() == normalized_source_id
+                ),
+                None,
+            )
+            if target_row is None:
+                raise ValueError("That item is not in your inventory, or it can't be salvaged right now.")
+        else:
+            target_row = inv_rows[0]
+
+        _, item = target_row
         await InventoryService(self.session).remove_item(user.id, item.id, 1)
         credits = int(item.base_value * (1.1 + rng.random() * 0.8))
         user.credits += credits
@@ -349,8 +373,26 @@ class ActivityService:
             if refined:
                 await InventoryService(self.session).add_item(user.id, refined.id, 1)
                 reward_items.append((refined.id, 1))
-        self.session.add(ActivityAttempt(user_id=user.id, activity_type="salvage", seed=seed, result={"credits": credits, "jackpot": jackpot}))
-        return ActivityResult(seed, True, credits, reward_items, "Salvage complete.")
+        self.session.add(
+            ActivityAttempt(
+                user_id=user.id,
+                activity_type="salvage",
+                seed=seed,
+                result={"credits": credits, "jackpot": jackpot, "item_id": item.id, "item_name": item.name},
+            )
+        )
+        salvage_lines = [f"Salvaged **{item.name}** for **{credits}** credits."]
+        if reward_items:
+            rewarded_ids = [item_id for item_id, _ in reward_items]
+            reward_rows = (await self.session.execute(select(Item).where(Item.id.in_(rewarded_ids)))).scalars().all()
+            reward_names = {x.id: x.name for x in reward_rows}
+            salvage_lines.append("Recovered materials:")
+            for item_id, qty in reward_items:
+                salvage_lines.append(f"• {reward_names.get(item_id, 'Unknown Item')} x{qty}")
+        else:
+            salvage_lines.append("Recovered materials: none")
+
+        return ActivityResult(seed, True, credits, reward_items, "\n".join(salvage_lines))
 
     async def courier(self, user: User, stake: int) -> ActivityResult:
         await self._check_cd(user.id, "courier", 75)

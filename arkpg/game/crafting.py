@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import re
+
 from arkpg.db.models import Item
 from arkpg.game.loadout import is_gadget, is_healing, is_shield, is_weapon
 
 RARITY_TIER = {"common": 1, "uncommon": 2, "rare": 3, "epic": 4, "legendary": 5}
+
+
+def _weapon_mark_tier(source_id: str) -> int:
+    """Weapon mark tier based on source id naming (base, _t2, _t3, _t4)."""
+    match = re.search(r"_t([2-9]\d*)$", source_id)
+    if match:
+        return int(match.group(1))
+    return 1
 
 
 def is_craftable_item(item: Item) -> bool:
@@ -17,21 +27,6 @@ def crafting_recipe_for_item(item: Item) -> list[tuple[str, int]]:
 
     if source_id == "bandage":
         return [("fabric", 5)]
-
-    if source_id in {"stitcher", "stitcher_t2", "stitcher_t3", "stitcher_t4"}:
-        stitcher_tier = {
-            "stitcher": 1,
-            "stitcher_t2": 2,
-            "stitcher_t3": 3,
-            "stitcher_t4": 4,
-        }[source_id]
-        return [
-            ("light_gun_parts", 2 + stitcher_tier),
-            ("metal_parts", 2 + stitcher_tier),
-            ("wires", stitcher_tier),
-            ("electrical_components", max(1, stitcher_tier - 1)),
-            *([("arc_alloy", 1)] if stitcher_tier >= 3 else []),
-        ]
 
     if is_healing(item):
         return [
@@ -54,17 +49,18 @@ def crafting_recipe_for_item(item: Item) -> list[tuple[str, int]]:
         return recipe
 
     if is_weapon(item):
+        mark_tier = _weapon_mark_tier(source_id)
         recipe = [
-            ("light_gun_parts", 2 + tier),
-            ("metal_parts", 1 + tier),
-            ("wires", max(1, tier - 1)),
+            ("light_gun_parts", 2 + tier + (mark_tier - 1)),
+            ("metal_parts", 1 + tier + (mark_tier - 1)),
+            ("wires", max(1, tier - 1) + (mark_tier - 1)),
         ]
-        if tier >= 3:
-            recipe.append(("electrical_components", tier - 1))
-        if tier >= 4:
-            recipe.append(("arc_alloy", 1))
-        if tier >= 5:
-            recipe.append(("advanced_mechanical_components", 1))
+        if tier >= 3 or mark_tier >= 2:
+            recipe.append(("electrical_components", max(1, tier - 1) + max(0, mark_tier - 2)))
+        if tier >= 4 or mark_tier >= 3:
+            recipe.append(("arc_alloy", 1 + max(0, mark_tier - 3)))
+        if tier >= 5 or mark_tier >= 4:
+            recipe.append(("advanced_mechanical_components", 1 + max(0, mark_tier - 4)))
         return recipe
 
     # gadget / throwable
