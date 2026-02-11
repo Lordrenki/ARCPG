@@ -4,7 +4,7 @@ from arkpg.db.models import Item, ItemType
 
 WEAPON_TYPES = {
     "rifle", "burst rifle", "smg", "shotgun", "sniper", "lmg", "pistol", "hand cannon", "bow",
-    "weapon", "melee", "launcher", "arc weapon",
+    "weapon", "melee", "launcher", "arc weapon", "assault rifle", "battle rifle", "sniper rifle", "special",
 }
 
 HEALING_ITEM_FLAT = {
@@ -127,4 +127,3 @@ def as_item_payload(item: Item) -> dict:
         "source_type": metadata.get("source_type") or item.type.value,
         "description": metadata.get("description") or "",
     }
-

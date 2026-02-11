@@ -79,8 +79,8 @@ def _trade_ref(trade: Trade) -> str:
 def _trade_summary(trade: Trade) -> str:
     offered = trade.offered or {}
     requested = trade.requested or {}
-    offered_bits = [f"{int(offered.get('credits', 0) or 0)} credits"]
-    requested_bits = [f"{int(requested.get('credits', 0) or 0)} credits"]
+    offered_bits = [f"{int(offered.get('credits', 0) or 0)} Scrap"]
+    requested_bits = [f"{int(requested.get('credits', 0) or 0)} Scrap"]
     if offered.get("item_id") and int(offered.get("item_qty", 0) or 0) > 0:
         offered_bits.append(f"item #{int(offered['item_id'])} x{int(offered['item_qty'])}")
     if requested.get("item_id") and int(requested.get("item_qty", 0) or 0) > 0:
@@ -88,8 +88,8 @@ def _trade_summary(trade: Trade) -> str:
     return f"Offer: {', '.join(offered_bits)}\nRequest: {', '.join(requested_bits)}"
 
 
-class _TradeAmountModal(discord.ui.Modal, title="Add Trade Credits"):
-    credits = discord.ui.TextInput(label="Credits to add", placeholder="0", max_length=10)
+class _TradeAmountModal(discord.ui.Modal, title="Add Trade Scrap"):
+    credits = discord.ui.TextInput(label="Scrap to add", placeholder="0", max_length=10)
 
     def __init__(self, trade_id: int, owner_id: int):
         super().__init__()
@@ -103,10 +103,10 @@ class _TradeAmountModal(discord.ui.Modal, title="Add Trade Credits"):
         try:
             delta = int(str(self.credits.value).strip())
         except ValueError:
-            await interaction.response.send_message("Credits must be a whole number.", ephemeral=True)
+            await interaction.response.send_message("Scrap must be a whole number.", ephemeral=True)
             return
         if delta <= 0:
-            await interaction.response.send_message("Credits must be greater than zero.", ephemeral=True)
+            await interaction.response.send_message("Scrap must be greater than zero.", ephemeral=True)
             return
         async with SessionLocal() as session:
             trade = await session.get(Trade, self.trade_id)
@@ -208,6 +208,32 @@ class TradeOfferView(discord.ui.View):
         await interaction.response.edit_message(content=f"Trade {_trade_ref(trade)} denied.", view=None)
 
 
+
+class DuelRequestView(discord.ui.View):
+    def __init__(self, cog: "GameplayCog", challenger: discord.abc.User, opponent: discord.abc.User, timeout: float = 90):
+        super().__init__(timeout=timeout)
+        self.cog = cog
+        self.challenger = challenger
+        self.opponent = opponent
+
+    @discord.ui.button(label="Accept Duel", style=discord.ButtonStyle.success)
+    async def accept(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if interaction.user.id != self.opponent.id:
+            await interaction.response.send_message("Only the challenged player can accept this duel.", ephemeral=True)
+            return
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(content=f"Duel accepted by {self.opponent.mention}. Resolving...", view=self)
+        await self.cog._resolve_duel(interaction, self.challenger, self.opponent)
+
+    @discord.ui.button(label="Deny Duel", style=discord.ButtonStyle.danger)
+    async def deny(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        if interaction.user.id != self.opponent.id:
+            await interaction.response.send_message("Only the challenged player can deny this duel.", ephemeral=True)
+            return
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(content=f"Duel request denied by {self.opponent.mention}.", view=self)
 
 
 class BossSignupView(discord.ui.View):
@@ -524,7 +550,8 @@ class GameplayCog(commands.Cog):
             existing = (await session.execute(select(User).where(User.discord_id == interaction.user.id))).scalar_one_or_none()
             user = await get_or_create_user(session, interaction.user.id)
             await SeederService.ensure_seed_data(session)
-            await ensure_starter_kit(session, user)
+            if existing is None:
+                await ensure_starter_kit(session, user)
             await session.commit()
 
         profile = normalized_profile(user)
@@ -542,7 +569,7 @@ class GameplayCog(commands.Cog):
         page2.description = "Run missions, recover loot, and improve your build over time."
         page2.add_field(name="1) /deploy", value="Start a run in Residential, Industrial, or ARC Site.", inline=False)
         page2.add_field(name="2) /extract", value="Collect loot and rewards after the timer finishes.", inline=False)
-        page2.add_field(name="3) /claim", value="Collect idle XP and credits between active runs.", inline=False)
+        page2.add_field(name="3) /claim", value="Collect idle XP and Scrap between active runs.", inline=False)
         page2.set_footer(text="ARCPG Alpha V.0.5 • Page 2/3")
         pages.append(page2)
 
@@ -557,7 +584,7 @@ class GameplayCog(commands.Cog):
         view = PaginatedEmbedView(owner_id=interaction.user.id, pages=pages)
         await interaction.response.send_message(embed=view.current_embed(), view=view, ephemeral=True)
 
-    @app_commands.command(description="Claim your idle XP and credits.")
+    @app_commands.command(description="Claim your idle XP and Scrap.")
     async def claim(self, interaction: discord.Interaction) -> None:
         async with SessionLocal() as session:
             await SeederService.ensure_seed_data(session)
@@ -565,7 +592,7 @@ class GameplayCog(commands.Cog):
         embed = self._styled_embed(title="Idle claim complete")
         embed.add_field(name="Recovered Time", value=f"{minutes} min")
         embed.add_field(name="XP", value=f"+{xp}")
-        embed.add_field(name="Credits", value=f"+{credits}")
+        embed.add_field(name="Scrap", value=f"+{credits}")
         materials = (user.stats or {}).get("last_claim_materials", [])
         if isinstance(materials, list) and materials:
             material_text = "\n".join(
@@ -624,7 +651,7 @@ class GameplayCog(commands.Cog):
         embed = self._styled_embed(title=f"Extraction: {outcome['status'].title()}", color=color)
         embed.add_field(name="Event", value=outcome["event"], inline=False)
         embed.add_field(name="XP", value=f"+{outcome['xp']}")
-        embed.add_field(name="Credits", value=f"+{outcome['credits']}")
+        embed.add_field(name="Scrap", value=f"+{outcome['credits']}")
         loot_text = "\n".join(f"• {x['name']} x{x['qty']}" for x in outcome["loot"]) if outcome["loot"] else "No recovered loot"
         embed.add_field(name="Recovered", value=loot_text, inline=False)
         survivability = outcome.get("survivability") or {}
@@ -756,14 +783,14 @@ class GameplayCog(commands.Cog):
         return picks
 
     @app_commands.command(description="Equip an item from inventory to a loadout slot.")
-    @app_commands.describe(slot="Slot to equip", item_id="Choose an item from your inventory", weapon_slot="Only used when slot is weapon")
+    @app_commands.describe(slot="Slot to equip", item_id="Choose an item from your inventory", weapon_slot="Optional; only slot 1 is available for weapons")
     @app_commands.autocomplete(item_id=equip_item_autocomplete)
     async def equip(
         self,
         interaction: discord.Interaction,
         slot: Literal["weapon", "gadget", "healing", "shield"],
         item_id: int,
-        weapon_slot: app_commands.Range[int, 1, 2] | None = None,
+        weapon_slot: app_commands.Range[int, 1, 1] | None = None,
     ) -> None:
         normalized_slot = slot.strip().lower()
 
@@ -783,12 +810,12 @@ class GameplayCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Unequip an item from a loadout slot back into inventory.")
-    @app_commands.describe(slot="Slot to clear", weapon_slot="Required when slot is weapon")
+    @app_commands.describe(slot="Slot to clear", weapon_slot="Optional; only slot 1 is available for weapons")
     async def unequip(
         self,
         interaction: discord.Interaction,
         slot: Literal["weapon", "gadget", "healing", "shield"],
-        weapon_slot: app_commands.Range[int, 1, 2] | None = None,
+        weapon_slot: app_commands.Range[int, 1, 1] | None = None,
     ) -> None:
         normalized_slot = slot.strip().lower()
         async with SessionLocal() as session:
@@ -806,17 +833,19 @@ class GameplayCog(commands.Cog):
         embed.add_field(name="Shield", value=(loadout.get("shield") or {}).get("name", "None"), inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(description="View your customizable profile card.")
-    async def profile(self, interaction: discord.Interaction) -> None:
+    @app_commands.command(description="View your profile card or inspect another player's profile card.")
+    async def profile(self, interaction: discord.Interaction, member: discord.Member | None = None) -> None:
+        target_member: discord.abc.User = member or interaction.user
         async with SessionLocal() as session:
-            user = await get_or_create_user(session, interaction.user.id)
+            user = await get_or_create_user(session, target_member.id)
             expected_level = level_from_xp(user.xp)
             if user.level != expected_level:
                 user.level = expected_level
                 await session.commit()
             profile = normalized_profile(user)
-            title = (await session.get(Title, user.equipped_title_id)).name if user.equipped_title_id else "Unassigned"
-            _user, loadout = await get_equipped_loadout(session, interaction.user.id)
+            title_row = await session.get(Title, user.equipped_title_id) if user.equipped_title_id else None
+            title = title_row.name if title_row else "Unassigned"
+            _user, loadout = await get_equipped_loadout(session, target_member.id)
 
         combat = user.stats.get("combat", 10)
         tech = user.stats.get("tech", 10)
@@ -831,7 +860,7 @@ class GameplayCog(commands.Cog):
         background = get_background(str(profile["background_id"]))
         is_admin = self._is_super_admin(interaction)
         card = await render_profile_card(
-            interaction_user=interaction.user,
+            interaction_user=target_member,
             callsign=str(profile["callsign"]),
             title_name=title,
             bio=str(profile["bio"]),
@@ -851,7 +880,7 @@ class GameplayCog(commands.Cog):
             admin_background_path=str(ADMIN_PROFILE_BACKGROUND_PATH) if is_admin else None,
         )
         file = discord.File(card, filename="profile-card.png")
-        await interaction.response.send_message(file=file)
+        await interaction.response.send_message(file=file, ephemeral=(member is None))
 
     @app_commands.command(description="Open a private profile editor with buttons and menus.")
     async def editprofile(self, interaction: discord.Interaction) -> None:
@@ -1075,7 +1104,7 @@ class GameplayCog(commands.Cog):
                 return
         await interaction.response.send_message(f"Donation accepted. Expedition score +{score}.", ephemeral=True)
 
-    @app_commands.command(description="Donate credits to expedition.")
+    @app_commands.command(description="Donate Scrap to expedition.")
     async def expedition_donate_credits(self, interaction: discord.Interaction, credits: int) -> None:
         async with SessionLocal() as session:
             user = await get_or_create_user(session, interaction.user.id)
@@ -1084,7 +1113,7 @@ class GameplayCog(commands.Cog):
             except ValueError as exc:
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
-        await interaction.response.send_message(f"Credits donated. Expedition score +{score}.", ephemeral=True)
+        await interaction.response.send_message(f"Scrap donated. Expedition score +{score}.", ephemeral=True)
 
     @app_commands.command(description="Depart during active departure window.")
     async def expedition_depart(self, interaction: discord.Interaction) -> None:
@@ -1249,7 +1278,7 @@ class GameplayCog(commands.Cog):
                 return
         await interaction.response.send_message(f"{result.message} Net `{result.credits}`")
 
-    @app_commands.command(description="Work a random side job for credits.")
+    @app_commands.command(description="Work a random side job for Scrap.")
     async def work(self, interaction: discord.Interaction) -> None:
         async with SessionLocal() as session:
             user = await get_or_create_user(session, interaction.user.id)
@@ -1262,7 +1291,7 @@ class GameplayCog(commands.Cog):
                 return
         await interaction.response.send_message(result.message)
 
-    @app_commands.command(description="Bet credits on a dice roll.")
+    @app_commands.command(description="Bet Scrap on a dice roll.")
     async def dice(self, interaction: discord.Interaction, stake: app_commands.Range[int, 10, 100000]) -> None:
         async with SessionLocal() as session:
             user = await get_or_create_user(session, interaction.user.id)
@@ -1299,6 +1328,7 @@ class GameplayCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Show public item stats and combat-relevant effects.")
+    @app_commands.autocomplete(item_id=inventory_item_autocomplete)
     async def iteminfo(self, interaction: discord.Interaction, item_id: int) -> None:
         async with SessionLocal() as session:
             item = await session.get(Item, item_id)
@@ -1398,7 +1428,7 @@ class GameplayCog(commands.Cog):
         embed = self._styled_embed(title="Healing Applied")
         embed.add_field(name="Item", value=f"{item.name} x{qty}", inline=True)
         embed.add_field(name="HP Restored", value=str(applied), inline=True)
-        embed.add_field(name="Current HP", value=f"{new_hp}/{max_hp}", inline=True)
+        embed.add_field(name="Current HP", value=f"{new_hp}", inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Create a squad.")
@@ -1425,6 +1455,62 @@ class GameplayCog(commands.Cog):
             await EventBus.emit(session, me, "SQUAD_JOINED", {"counter_updates": {"squad_joins": 1}})
             await session.commit()
         await interaction.response.send_message(f"Joined **{name}**.", ephemeral=True)
+
+    async def _resolve_duel(self, interaction: discord.Interaction, challenger: discord.abc.User, opponent: discord.abc.User) -> None:
+        async with SessionLocal() as session:
+            me = await get_or_create_user(session, challenger.id)
+            them = await get_or_create_user(session, opponent.id)
+            _me_user, my_loadout = await get_equipped_loadout(session, challenger.id)
+            _them_user, their_loadout = await get_equipped_loadout(session, opponent.id)
+            my_power = self._combat_rating(me, my_loadout)
+            their_power = self._combat_rating(them, their_loadout)
+            roll_me = random.uniform(0.82, 1.18)
+            roll_them = random.uniform(0.82, 1.18)
+            i_win = (my_power * roll_me) >= (their_power * roll_them)
+
+            winner_user = me if i_win else them
+            loser_user = them if i_win else me
+            winner_member = challenger if i_win else opponent
+            loser_member = opponent if i_win else challenger
+
+            if i_win:
+                await EventBus.emit(session, me, "PVP_WIN", {"counter_updates": {"pvp_wins": 1, "pvp_fair_wins": 1}})
+            xp_reward = random.randint(14, 26)
+            scrap_reward = random.randint(90, 170)
+            winner_user.xp += xp_reward
+            winner_user.credits += scrap_reward
+            winner_user.level = level_from_xp(winner_user.xp)
+
+            loser_stats = dict(loser_user.stats or {})
+            max_hp = int(loser_stats.get("max_health", 100) or 100)
+            loser_hp = int(loser_stats.get("health", max_hp) or max_hp)
+            hp_penalty = random.randint(12, 22)
+            loser_stats["health"] = max(0, loser_hp - hp_penalty)
+            loser_user.stats = loser_stats
+            now = datetime.now(timezone.utc)
+            me_prog = dict(me.progression_json or {})
+            me_prog["duel_cd_until"] = (now + timedelta(seconds=DUEL_COOLDOWN_SECONDS)).isoformat()
+            me.progression_json = me_prog
+
+            await session.commit()
+
+        flavor_pool = [
+            f"{winner_member.mention} baited a reload and landed the finishing burst on {loser_member.mention}.",
+            f"{loser_member.mention} had the early advantage, but {winner_member.mention} turned it around with better positioning.",
+            f"A chaos grenade broke the tempo and {winner_member.mention} capitalized first against {loser_member.mention}.",
+            f"After a long standoff, {winner_member.mention} committed to the push and won the duel over {loser_member.mention}.",
+            f"Both raiders traded heavy hits, but {winner_member.mention} survived the final exchange.",
+            f"The arena lights flickered and {winner_member.mention} used the opening to outplay {loser_member.mention}.",
+        ]
+        upset = abs(my_power - their_power) > 6 and ((i_win and my_power < their_power) or ((not i_win) and their_power < my_power))
+        flavor = random.choice(flavor_pool) + (" **Upset win!**" if upset else "")
+        await interaction.followup.send(
+            f"{flavor}\n"
+            f"Duel: {challenger.mention} vs {opponent.mention}.\n"
+            f"Power check: **{my_power:.1f}** vs **{their_power:.1f}**.\n"
+            f"Winner reward: **+{xp_reward} XP**, **+{scrap_reward} Scrap**. "
+            f"Loser penalty: **-{hp_penalty} HP**."
+        )
 
     @app_commands.command(description="Challenge another player to a duel.")
     async def duel(self, interaction: discord.Interaction, opponent: discord.Member) -> None:
@@ -1455,56 +1541,12 @@ class GameplayCog(commands.Cog):
             if abs(me.level - them.level) > 8:
                 await interaction.response.send_message("Level difference too large. Find a closer rival.", ephemeral=True)
                 return
-            _me_user, my_loadout = await get_equipped_loadout(session, interaction.user.id)
-            _them_user, their_loadout = await get_equipped_loadout(session, opponent.id)
-            my_power = self._combat_rating(me, my_loadout)
-            their_power = self._combat_rating(them, their_loadout)
-            roll_me = random.uniform(0.82, 1.18)
-            roll_them = random.uniform(0.82, 1.18)
-            i_win = (my_power * roll_me) >= (their_power * roll_them)
 
-            winner_user = me if i_win else them
-            loser_user = them if i_win else me
-            winner_member = interaction.user if i_win else opponent
-            loser_member = opponent if i_win else interaction.user
-
-            if i_win:
-                await EventBus.emit(session, me, "PVP_WIN", {"counter_updates": {"pvp_wins": 1, "pvp_fair_wins": 1}})
-            xp_reward = random.randint(14, 26)
-            credit_reward = random.randint(90, 170)
-            winner_user.xp += xp_reward
-            winner_user.credits += credit_reward
-            winner_user.level = level_from_xp(winner_user.xp)
-
-            loser_stats = dict(loser_user.stats or {})
-            max_hp = int(loser_stats.get("max_health", 100) or 100)
-            loser_hp = int(loser_stats.get("health", max_hp) or max_hp)
-            hp_penalty = random.randint(12, 22)
-            loser_stats["health"] = max(0, loser_hp - hp_penalty)
-            loser_user.stats = loser_stats
-            now = datetime.now(timezone.utc)
-            me_prog = dict(me.progression_json or {})
-            me_prog["duel_cd_until"] = (now + timedelta(seconds=DUEL_COOLDOWN_SECONDS)).isoformat()
-            me.progression_json = me_prog
-
-            await session.commit()
-
-        flavor_pool = [
-            f"{winner_member.mention} baited a reload and landed the finishing burst on {loser_member.mention}.",
-            f"{loser_member.mention} had the early advantage, but {winner_member.mention} turned it around with better positioning.",
-            f"A chaos grenade broke the tempo and {winner_member.mention} capitalized first against {loser_member.mention}.",
-            f"After a long standoff, {winner_member.mention} committed to the push and won the duel over {loser_member.mention}.",
-            f"Both raiders traded heavy hits, but {winner_member.mention} survived the final exchange.",
-            f"The arena lights flickered and {winner_member.mention} used the opening to outplay {loser_member.mention}.",
-        ]
-        upset = abs(my_power - their_power) > 6 and ((i_win and my_power < their_power) or ((not i_win) and their_power < my_power))
-        flavor = random.choice(flavor_pool) + (" **Upset win!**" if upset else "")
+        view = DuelRequestView(self, challenger=interaction.user, opponent=opponent)
         await interaction.response.send_message(
-            f"{flavor}\n"
-            f"Duel: {interaction.user.mention} vs {opponent.mention}.\n"
-            f"Power check: **{my_power:.1f}** vs **{their_power:.1f}**.\n"
-            f"Winner reward: **+{xp_reward} XP**, **+{credit_reward} credits**. "
-            f"Loser penalty: **-{hp_penalty} HP**."
+            f"{opponent.mention}, {interaction.user.mention} challenged you to a duel. Accept or deny below.",
+            view=view,
+            allowed_mentions=discord.AllowedMentions(users=True),
         )
 
     @app_commands.command(description="Create a pending trade offer.")
@@ -1526,7 +1568,7 @@ class GameplayCog(commands.Cog):
             await interaction.response.send_message("Trade values cannot be negative.", ephemeral=True)
             return
         if offered_credits == requested_credits == 0 and offered_item_qty == requested_item_qty == 0:
-            await interaction.response.send_message("Trade must include credits or items.", ephemeral=True)
+            await interaction.response.send_message("Trade must include Scrap or items.", ephemeral=True)
             return
         if (offered_item_id is None) != (offered_item_qty == 0):
             await interaction.response.send_message("Set both offered item id and qty, or leave both empty.", ephemeral=True)

@@ -137,7 +137,7 @@ async def render_profile_card(
     if hp_filled > 0:
         draw.rounded_rectangle((hp_x + fill_inset, bar_y + fill_inset, hp_x + fill_inset + hp_filled, bar_y + bar_h - fill_inset), radius=10, fill=hp_color)
     draw.text((hp_x + 12, bar_y + 12), "HP", fill=(255, 255, 255), font=mid_bold_font)
-    hp_text = f"{health}/{max_health}"
+    hp_text = f"{health}"
     hp_box = draw.textbbox((0, 0), hp_text, font=mid_bold_font)
     hp_text_w = hp_box[2] - hp_box[0]
     hp_text_x = max(hp_x + 78, hp_x + hp_w - hp_text_w - 14)

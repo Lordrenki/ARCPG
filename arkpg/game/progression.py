@@ -87,7 +87,7 @@ class SeederService:
 
         weapon_types = {
             "rifle", "burst rifle", "smg", "shotgun", "sniper", "lmg", "pistol", "hand cannon", "bow",
-            "weapon", "melee", "launcher", "arc weapon",
+            "weapon", "melee", "launcher", "arc weapon", "assault rifle", "battle rifle", "sniper rifle", "special",
         }
         armor_types = {"armor", "helmet", "chest", "boots", "gauntlets", "shield"}
         gadget_types = {"quick use", "modification", "deployable", "gadget", "consumable"}
