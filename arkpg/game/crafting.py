@@ -18,6 +18,21 @@ def crafting_recipe_for_item(item: Item) -> list[tuple[str, int]]:
     if source_id == "bandage":
         return [("fabric", 5)]
 
+    if source_id in {"stitcher", "stitcher_t2", "stitcher_t3", "stitcher_t4"}:
+        stitcher_tier = {
+            "stitcher": 1,
+            "stitcher_t2": 2,
+            "stitcher_t3": 3,
+            "stitcher_t4": 4,
+        }[source_id]
+        return [
+            ("light_gun_parts", 2 + stitcher_tier),
+            ("metal_parts", 2 + stitcher_tier),
+            ("wires", stitcher_tier),
+            ("electrical_components", max(1, stitcher_tier - 1)),
+            *([("arc_alloy", 1)] if stitcher_tier >= 3 else []),
+        ]
+
     if is_healing(item):
         return [
             ("bandage", 1 + tier),

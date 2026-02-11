@@ -96,9 +96,9 @@ def load_items() -> tuple[GameItem, ...]:
 
 def filter_items_for_zone(zone: str) -> tuple[GameItem, ...]:
     zone_tags = {
-        "Residential": {"residential", "commercial", "nature"},
-        "Industrial": {"industrial", "mechanical", "electrical", "technological", "medical"},
-        "ARC Site": {"arc"},
+        "Residential": {"residential", "commercial", "nature", "medical"},
+        "Industrial": {"industrial", "mechanical", "electrical", "technological", "medical", "commercial"},
+        "ARC Site": {"arc", "technological", "electrical", "mechanical", "medical"},
     }
     tags = zone_tags.get(zone, set())
     items = load_items()

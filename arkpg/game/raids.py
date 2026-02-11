@@ -131,7 +131,7 @@ def _roll_enemy_attack(state: RaidState, rng: random.Random, dodge_active: bool)
     return f"{rng.choice(ENEMY_ATTACK_FLAVOR)} (-{dmg} HP)", dmg
 
 
-def resolve_action(state: RaidState, action: RaidAction, rng: random.Random) -> RaidTurnResult:
+def resolve_action(state: RaidState, action: RaidAction, rng: random.Random, can_heal: bool = True) -> RaidTurnResult:
     lines: list[str] = [f"**Turn {state.turn}**"]
 
     if action == "retreat":
@@ -146,6 +146,8 @@ def resolve_action(state: RaidState, action: RaidAction, rng: random.Random) -> 
     elif action == "heal":
         if state.heals_left <= 0:
             lines.append("Your med reserves are dry. No healing applied.")
+        elif not can_heal:
+            lines.append("You have no bandages in your inventory. Healing failed.")
         else:
             heal_amt = rng.randint(22, 38)
             before = state.player_hp
