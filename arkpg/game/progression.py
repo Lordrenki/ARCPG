@@ -465,16 +465,26 @@ class ExpeditionService:
         self.session.add(exp)
         await self.session.flush()
         stages = [
-            (1, "Outpost Foundation", {"credits": 15000, "rarity": {"common": 150}}),
-            (2, "Power Routing", {"credits": 22000, "rarity": {"uncommon": 120}}),
-            (3, "Hull Assembly", {"credits": 30000, "rarity": {"rare": 80}}),
-            (4, "Navigation Stack", {"credits": 36000, "rarity": {"epic": 35}}),
-            (5, "Departure Prep", {"credits": 45000, "rarity": {"legendary": 12}}),
+            (1, "Outpost Foundation", {"score": 3000, "rarity": {"common": 150}}),
+            (2, "Power Routing", {"score": 5200, "rarity": {"uncommon": 120}}),
+            (3, "Hull Assembly", {"score": 8000, "rarity": {"rare": 80}}),
+            (4, "Navigation Stack", {"score": 11000, "rarity": {"epic": 35}}),
+            (5, "Departure Prep", {"score": 14500, "rarity": {"legendary": 12}}),
         ]
         for num, name, req in stages:
-            self.session.add(ExpeditionStage(expedition_id=exp.id, stage_number=num, name=name, requirements=req, contributed={"credits": 0, "rarity": defaultdict(int)}))
+            self.session.add(ExpeditionStage(expedition_id=exp.id, stage_number=num, name=name, requirements=req, contributed={"score": 0, "rarity": defaultdict(int)}))
         await self.session.commit()
         return exp
+
+    @staticmethod
+    def _is_allowed_donation_item(item: Item) -> bool:
+        return item.type in {ItemType.COMPONENT, ItemType.RECYCLABLE}
+
+    @staticmethod
+    def _item_donation_score(item: Item, qty: int) -> int:
+        # Keep progression meaningful while preventing extreme score spikes from high-value items.
+        value_per_item = max(10, int(item.base_value * RARITY_MULTIPLIER.get(item.rarity.value, 1.0) / 20))
+        return value_per_item * qty
 
     async def donate_item(self, user: User, item_id: int, qty: int) -> int:
         exp = await self.active()
@@ -483,23 +493,14 @@ class ExpeditionService:
         item = await self.session.get(Item, item_id)
         if not item:
             raise ValueError("Item not found.")
+        if not self._is_allowed_donation_item(item):
+            raise ValueError("Only crafting materials can be donated to the expedition.")
         await InventoryService(self.session).remove_item(user.id, item_id, qty)
-        score = int(item.base_value * RARITY_MULTIPLIER.get(str(item.rarity), 1.0) * qty)
-        await self._apply_contribution(exp, user, score, {str(item_id): qty}, 0, item_rarity=str(item.rarity), qty=qty)
+        score = self._item_donation_score(item, qty)
+        await self._apply_contribution(exp, user, score, {str(item_id): qty}, item_rarity=item.rarity.value, qty=qty)
         return score
 
-    async def donate_credits(self, user: User, credits: int) -> int:
-        exp = await self.active()
-        if not exp or exp.status != ExpeditionStatus.ACTIVE:
-            raise ValueError("No active expedition accepts donations.")
-        if credits <= 0 or user.credits < credits:
-            raise ValueError("Insufficient credits.")
-        user.credits -= credits
-        score = credits
-        await self._apply_contribution(exp, user, score, {}, credits)
-        return score
-
-    async def _apply_contribution(self, exp: Expedition, user: User, score: int, item_map: dict[str, int], credits: int, item_rarity: str | None = None, qty: int = 0) -> None:
+    async def _apply_contribution(self, exp: Expedition, user: User, score: int, item_map: dict[str, int], item_rarity: str | None = None, qty: int = 0) -> None:
         contrib = (await self.session.execute(select(ExpeditionContribution).where(and_(ExpeditionContribution.expedition_id == exp.id, ExpeditionContribution.user_id == user.id)).with_for_update())).scalar_one_or_none()
         if contrib is None:
             contrib = ExpeditionContribution(expedition_id=exp.id, user_id=user.id, contributed_items={}, contributed_credits=0, score=0)
@@ -508,14 +509,13 @@ class ExpeditionService:
         for k, v in item_map.items():
             citems[k] = int(citems.get(k, 0)) + v
         contrib.contributed_items = citems
-        contrib.contributed_credits += credits
         contrib.score += score
         contrib.updated_at = datetime.now(timezone.utc)
 
         stage = (await self.session.execute(select(ExpeditionStage).where(and_(ExpeditionStage.expedition_id == exp.id, ExpeditionStage.is_complete.is_(False))).order_by(ExpeditionStage.stage_number.asc()).limit(1).with_for_update())).scalar_one_or_none()
         if stage:
-            data = dict(stage.contributed or {"credits": 0, "rarity": {}})
-            data["credits"] = int(data.get("credits", 0)) + credits
+            data = dict(stage.contributed or {"score": 0, "rarity": {}})
+            data["score"] = int(data.get("score", data.get("credits", 0))) + score
             rarity_map = dict(data.get("rarity", {}))
             if item_rarity:
                 rarity_map[item_rarity] = int(rarity_map.get(item_rarity, 0)) + qty
@@ -523,7 +523,9 @@ class ExpeditionService:
             stage.contributed = data
             req = stage.requirements or {}
             req_rarity = req.get("rarity", {})
-            complete = data.get("credits", 0) >= req.get("credits", 0) and all(rarity_map.get(r, 0) >= n for r, n in req_rarity.items())
+            score_progress = int(data.get("score", data.get("credits", 0)))
+            required_score = int(req.get("score", req.get("credits", 0)))
+            complete = score_progress >= required_score and all(rarity_map.get(r, 0) >= n for r, n in req_rarity.items())
             if complete:
                 stage.is_complete = True
                 stage.completed_at = datetime.now(timezone.utc)

@@ -55,13 +55,12 @@ tests/
 
 ### B) Expedition Project System
 - Multi-stage seasonal expedition with donation-based progression.
-- Transactional item/credit donations with row locks and contribution scoring.
+- Transactional crafting-material donations with row locks and contribution scoring.
 - Departure window with permanent rewards + temporary stacked buffs.
 - Catch-up state support for missed permanent progression.
 - Commands:
   - `/expedition_status`
   - `/expedition_donate_item`
-  - `/expedition_donate_credits`
   - `/expedition_depart`
   - `/expedition_rewards`
   - `/expedition_catchup_status`
