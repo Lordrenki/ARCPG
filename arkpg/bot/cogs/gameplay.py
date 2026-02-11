@@ -1383,7 +1383,7 @@ class GameplayCog(commands.Cog):
         embed.add_field(name="Stages", value="\n".join(f"{s.stage_number}. {s.name} {'✅' if s.is_complete else '⏳'}" for s in stages), inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(description="Donate item quantity to expedition.")
+    @app_commands.command(description="Donate crafting materials to expedition.")
     @app_commands.autocomplete(item_id=inventory_item_autocomplete)
     async def expedition_donate_item(self, interaction: discord.Interaction, item_id: int, qty: int) -> None:
         async with SessionLocal() as session:
@@ -1393,18 +1393,8 @@ class GameplayCog(commands.Cog):
             except ValueError as exc:
                 await interaction.response.send_message(str(exc), ephemeral=True)
                 return
-        await interaction.response.send_message(f"Donation accepted. Expedition score +{score}.", ephemeral=True)
+        await interaction.response.send_message(f"Material donation accepted. Expedition score +{score}.", ephemeral=True)
 
-    @app_commands.command(description="Donate Scrap to expedition.")
-    async def expedition_donate_credits(self, interaction: discord.Interaction, credits: int) -> None:
-        async with SessionLocal() as session:
-            user = await get_or_create_user(session, interaction.user.id)
-            try:
-                score = await ExpeditionService(session).donate_credits(user, credits)
-            except ValueError as exc:
-                await interaction.response.send_message(str(exc), ephemeral=True)
-                return
-        await interaction.response.send_message(f"Scrap donated. Expedition score +{score}.", ephemeral=True)
 
     @app_commands.command(description="Depart during active departure window.")
     async def expedition_depart(self, interaction: discord.Interaction) -> None:
