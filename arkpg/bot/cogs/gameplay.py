@@ -45,6 +45,7 @@ from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
 from arkpg.game.economy import level_from_xp
 from arkpg.game.loadout import HEALING_ITEM_FLAT, SHIELD_DAMAGE_REDUCTION, gadget_utility_from_payload, is_gadget, is_healing, is_shield, is_weapon, source_type
 from arkpg.game.bosses import FLAVOR_CRITS, FLAVOR_DAMAGE, FLAVOR_SUPPORT, random_boss, weighted_damage_roll
+from arkpg.game.raids import RaidAction, RaidState, begin_raid, raid_rewards, resolve_action
 from arkpg.game.service import (
     atomic_trade_confirm,
     claim_idle,
@@ -237,6 +238,50 @@ class DuelRequestView(discord.ui.View):
         await interaction.response.edit_message(content=f"Duel request denied by {self.opponent.mention}.", view=self)
 
 
+class RaidEncounterView(discord.ui.View):
+    def __init__(self, cog: "GameplayCog", owner_id: int, state: RaidState, rng_seed: int, timeout: float = 240):
+        super().__init__(timeout=timeout)
+        self.cog = cog
+        self.owner_id = owner_id
+        self.state = state
+        self.rng = random.Random(rng_seed)
+
+    async def _run_action(self, interaction: discord.Interaction, action: RaidAction) -> None:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("This raid belongs to another player.", ephemeral=True)
+            return
+
+        result = resolve_action(self.state, action, self.rng)
+        embed = self.cog._raid_embed(self.state, "\n".join(result.lines))
+
+        if result.raid_over:
+            for child in self.children:
+                child.disabled = True
+            reward_line = await self.cog._finalize_raid(interaction.user.id, self.state, result.player_won, self.rng)
+            embed.add_field(name="Outcome", value=reward_line, inline=False)
+            await interaction.response.edit_message(embed=embed, view=self)
+            self.stop()
+            return
+
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="Attack", style=discord.ButtonStyle.danger)
+    async def attack(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self._run_action(interaction, "attack")
+
+    @discord.ui.button(label="Dodge", style=discord.ButtonStyle.secondary)
+    async def dodge(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self._run_action(interaction, "dodge")
+
+    @discord.ui.button(label="Heal", style=discord.ButtonStyle.success)
+    async def heal(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self._run_action(interaction, "heal")
+
+    @discord.ui.button(label="Retreat", style=discord.ButtonStyle.primary)
+    async def retreat(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await self._run_action(interaction, "retreat")
+
+
 class BossSignupView(discord.ui.View):
     def __init__(self, cog: "GameplayCog", guild_id: int, spawn_id: str):
         super().__init__(timeout=300)
@@ -354,6 +399,37 @@ class GameplayCog(commands.Cog):
             )
             return True
         return False
+
+    def _raid_embed(self, state: RaidState, narration: str) -> discord.Embed:
+        embed = self._styled_embed(title=f"Raid: {state.enemy.name}")
+        embed.description = narration
+        embed.add_field(name="Your HP", value=f"{state.player_hp}/{state.player_max_hp}", inline=True)
+        embed.add_field(name="Enemy HP", value=f"{state.enemy.hp}/{state.enemy.max_hp}", inline=True)
+        embed.add_field(name="Med Charges", value=str(state.heals_left), inline=True)
+        return embed
+
+    async def _finalize_raid(self, discord_id: int, state: RaidState, player_won: bool, rng: random.Random) -> str:
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, discord_id)
+            stats = dict(user.stats or {})
+            max_hp = int(stats.get("max_health", 100) or 100)
+            stats["max_health"] = max_hp
+            stats["health"] = max(0, min(max_hp, state.player_hp))
+            user.stats = stats
+
+            if player_won:
+                xp_reward, scrap_reward = raid_rewards(state.enemy.level, rng)
+                user.xp += xp_reward
+                user.credits += scrap_reward
+                user.level = level_from_xp(user.xp)
+                await EventBus.emit(session, user, "RAID_COMPLETED", {"counter_updates": {"raids_won": 1, "activity_credits_earned": scrap_reward}})
+                line = f"Victory. +{xp_reward} XP and +{scrap_reward} Scrap secured."
+            else:
+                hp_loss = max(0, state.player_max_hp - state.player_hp)
+                line = f"Raid failed. You withdraw with {state.player_hp} HP remaining (damage taken: {hp_loss})."
+
+            await session.commit()
+            return line
 
     def _guild_boss_rng(self, guild_id: int) -> random.Random:
         return random.Random((guild_id * 1_000_003) ^ int(self._boss_rng.random() * 1_000_000))
@@ -711,6 +787,26 @@ class GameplayCog(commands.Cog):
         if survivability:
             embed.add_field(name="Damage", value=f"Taken {survivability.get('effective_damage', 0)} • HP {survivability.get('health_after', '?')}" + (" • Auto-heal used" if survivability.get("healing_used") else ""), inline=False)
         await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(description="Start an interactive raid against a random high-level enemy.")
+    async def raid(self, interaction: discord.Interaction) -> None:
+        async with SessionLocal() as session:
+            await SeederService.ensure_seed_data(session)
+            if await self._block_if_down(interaction, session, action_label="start raids"):
+                return
+            user = await get_or_create_user(session, interaction.user.id)
+            stats = dict(user.stats or {})
+            max_hp = int(stats.get("max_health", 100) or 100)
+            hp = int(stats.get("health", max_hp) if stats.get("health") is not None else max_hp)
+
+        rng_seed = int(uuid4().int % (2**32))
+        raid_rng = random.Random(rng_seed)
+        state, opening = begin_raid(player_level=user.level, player_hp=hp, player_max_hp=max_hp, rng=raid_rng)
+        embed = self._raid_embed(state, opening)
+        embed.add_field(name="Actions", value="Use the buttons below each turn: Attack, Dodge, Heal, or Retreat.", inline=False)
+        view = RaidEncounterView(self, owner_id=interaction.user.id, state=state, rng_seed=rng_seed)
+        await interaction.response.send_message(embed=embed, view=view)
+
 
     @app_commands.command(description="View your inventory.")
     async def inventory(self, interaction: discord.Interaction) -> None:
