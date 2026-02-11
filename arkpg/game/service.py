@@ -53,6 +53,10 @@ async def get_or_create_user(session: AsyncSession, discord_id: int) -> User:
 
 
 async def ensure_starter_kit(session: AsyncSession, user: User) -> None:
+    stats = dict(user.stats or {}) if isinstance(user.stats, dict) else {}
+    if stats.get("starter_kit_initialized"):
+        return
+
     starter_ids = ("kettle", "light_shield", "bandage")
     rows = (await session.execute(select(Item).where(Item.metadata_json["source_id"].as_string().in_(starter_ids)))).scalars().all()
     if len(rows) < len(starter_ids):
@@ -103,6 +107,9 @@ async def ensure_starter_kit(session: AsyncSession, user: User) -> None:
                 await session.delete(inv)
 
     set_user_loadout(user, loadout)
+    stats = dict(user.stats) if isinstance(user.stats, dict) else {}
+    stats["starter_kit_initialized"] = True
+    user.stats = stats
 
 async def claim_idle(session: AsyncSession, settings: Settings, discord_id: int) -> tuple[User, int, int, int]:
     user = await get_or_create_user(session, discord_id)
@@ -269,9 +276,9 @@ async def atomic_trade_confirm(session: AsyncSession, trade_id: int) -> Trade:
     requested_credits = int((trade.requested or {}).get("credits", 0))
 
     if src.credits < offered_credits:
-        raise ValueError("Offerer does not have enough credits.")
+        raise ValueError("Offerer does not have enough Scrap.")
     if dst.credits < requested_credits:
-        raise ValueError("Target does not have enough credits.")
+        raise ValueError("Target does not have enough Scrap.")
 
     src.credits -= offered_credits
     dst.credits += offered_credits
@@ -337,7 +344,8 @@ def _default_loadout() -> dict:
 def get_user_loadout(user: User) -> dict:
     stats = dict(user.stats) if isinstance(user.stats, dict) else {}
     loadout = dict(stats.get("loadout") or {})
-    loadout.setdefault("weapons", [])
+    weapons = [w for w in (loadout.get("weapons") or []) if w]
+    loadout["weapons"] = weapons[:1]
     loadout.setdefault("gadget", None)
     loadout.setdefault("healing", None)
     loadout.setdefault("shield", None)
@@ -513,16 +521,11 @@ async def equip_loadout_item(session: AsyncSession, discord_id: int, item_id: in
     if slot == "weapon":
         if not is_weapon(item):
             raise ValueError("That item is not a weapon.")
-        weapons = list(loadout.get("weapons") or [])
-        if weapon_index is None:
-            weapon_index = 1 if len(weapons) < 1 else 2
-        if weapon_index not in (1, 2):
-            raise ValueError("Weapon slot must be 1 or 2.")
-        while len(weapons) < 2:
-            weapons.append(None)
-        replaced_item_id = _payload_item_id(weapons[weapon_index - 1])
-        weapons[weapon_index - 1] = payload
-        loadout["weapons"] = weapons
+        if weapon_index not in (None, 1):
+            raise ValueError("Only weapon slot 1 is available.")
+        weapons = [w for w in (loadout.get("weapons") or []) if w]
+        replaced_item_id = _payload_item_id(weapons[0]) if weapons else None
+        loadout["weapons"] = [payload]
         if replaced_item_id:
             await _increment_inventory_qty(session, user.id, replaced_item_id, qty=1)
     elif slot == "gadget":
@@ -563,16 +566,13 @@ async def unequip_loadout_item(session: AsyncSession, discord_id: int, slot: str
     loadout = get_user_loadout(user)
 
     if slot == "weapon":
-        weapons = list(loadout.get("weapons") or [])
-        if weapon_index not in (1, 2):
-            raise ValueError("Weapon slot must be 1 or 2.")
-        while len(weapons) < 2:
-            weapons.append(None)
-        item_id = _payload_item_id(weapons[weapon_index - 1])
+        if weapon_index not in (None, 1):
+            raise ValueError("Only weapon slot 1 is available.")
+        weapons = [w for w in (loadout.get("weapons") or []) if w]
+        item_id = _payload_item_id(weapons[0]) if weapons else None
         if not item_id:
-            raise ValueError("No weapon is equipped in that slot.")
-        weapons[weapon_index - 1] = None
-        loadout["weapons"] = weapons
+            raise ValueError("No weapon is equipped.")
+        loadout["weapons"] = []
     elif slot == "gadget":
         item_id = _payload_item_id(loadout.get("gadget"))
         if not item_id:
