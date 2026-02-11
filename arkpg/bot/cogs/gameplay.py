@@ -717,11 +717,11 @@ class GameplayCog(commands.Cog):
         async with SessionLocal() as session:
             user = await get_or_create_user(session, interaction.user.id)
             loadout = (user.stats or {}).get("loadout", {}) if isinstance(user.stats, dict) else {}
-            equipped_item_ids = {
+            equipped_item_ids = [
                 int(payload.get("item_id"))
                 for payload in [*(loadout.get("weapons") or []), loadout.get("gadget"), loadout.get("healing"), loadout.get("shield")]
                 if isinstance(payload, dict) and payload.get("item_id")
-            }
+            ]
             rows = (
                 await session.execute(
                     select(Inventory, Item)
@@ -731,9 +731,18 @@ class GameplayCog(commands.Cog):
                 )
             ).all()
 
-        visible_rows = [(inv, item) for inv, item in rows if item.id not in equipped_item_ids]
+        equipped_count: dict[int, int] = {}
+        for equipped_item_id in equipped_item_ids:
+            equipped_count[equipped_item_id] = equipped_count.get(equipped_item_id, 0) + 1
+
+        visible_rows: list[tuple[Inventory, Item, int]] = []
+        for inv, item in rows:
+            remaining_qty = int(inv.qty) - int(equipped_count.get(item.id, 0))
+            if remaining_qty > 0:
+                visible_rows.append((inv, item, remaining_qty))
+
         embed = self._styled_embed(title="Field Inventory")
-        embed.description = "\n".join(f"• {item.name} x{inv.qty}" for inv, item in visible_rows[:20]) if visible_rows else "Your stash is empty."
+        embed.description = "\n".join(f"• {item.name} x{remaining_qty}" for _inv, item, remaining_qty in visible_rows[:20]) if visible_rows else "Your stash is empty."
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="View your equipped combat loadout.")
@@ -1606,6 +1615,7 @@ class GameplayCog(commands.Cog):
         )
 
     @app_commands.command(description="Create a pending trade offer.")
+    @app_commands.autocomplete(offered_item_id=inventory_item_autocomplete, requested_item_id=inventory_item_autocomplete)
     async def trade(
         self,
         interaction: discord.Interaction,
