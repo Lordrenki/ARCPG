@@ -65,6 +65,7 @@ class RaidState:
     enemy: RaidEnemy
     heals_left: int = 2
     turn: int = 1
+    consecutive_dodges: int = 0
 
 
 @dataclass(slots=True)
@@ -119,9 +120,15 @@ def _roll_player_attack(state: RaidState, rng: random.Random) -> tuple[str, int]
 
 def _roll_enemy_attack(state: RaidState, rng: random.Random, dodge_active: bool) -> tuple[str, int]:
     if dodge_active:
-        if rng.random() <= 0.7:
+        dodge_chance = max(0.2, 0.62 - (0.14 * state.consecutive_dodges))
+        if rng.random() <= dodge_chance:
             return f"{rng.choice(DODGE_FLAVOR)} You avoid all damage.", 0
-        return "You try to dodge, but the timing is late.", 0
+        hit = rng.random() <= 0.92
+        if not hit:
+            return "You overcommit to a dodge, but the enemy still whiffs wide.", 0
+
+        dmg = int(rng.randint(state.enemy.min_damage, state.enemy.max_damage) * 1.2)
+        return f"You try to dodge, but the enemy reads your movement. (-{dmg} HP)", dmg
 
     hit = rng.random() <= 0.86
     if not hit:
@@ -139,6 +146,11 @@ def resolve_action(state: RaidState, action: RaidAction, rng: random.Random, can
         return RaidTurnResult(lines=lines, raid_over=True, player_won=False)
 
     dodge_active = action == "dodge"
+    if dodge_active:
+        state.consecutive_dodges += 1
+    else:
+        state.consecutive_dodges = 0
+
     if action == "attack":
         attack_line, dealt = _roll_player_attack(state, rng)
         state.enemy.hp = max(0, state.enemy.hp - dealt)
@@ -178,3 +190,17 @@ def raid_rewards(enemy_level: int, rng: random.Random) -> tuple[int, int]:
     xp = rng.randint(20, 40) + enemy_level
     scrap = rng.randint(110, 220) + enemy_level * 3
     return xp, scrap
+
+
+def strip_equipped_loadout(loadout: dict | None) -> tuple[dict, list[str]]:
+    normalized = dict(loadout or {})
+    lost_names: list[str] = []
+
+    for weapon in [w for w in (normalized.get("weapons") or []) if w]:
+        lost_names.append(str(weapon.get("name") or "Unknown weapon"))
+    for slot in ("gadget", "healing", "shield"):
+        payload = normalized.get(slot)
+        if payload:
+            lost_names.append(str(payload.get("name") or f"Unknown {slot}"))
+
+    return ({"weapons": [], "gadget": None, "healing": None, "shield": None}, lost_names)
