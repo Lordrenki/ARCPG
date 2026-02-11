@@ -60,3 +60,8 @@ def test_as_item_payload_contains_description() -> None:
     item = _item(source_id="wolfpack", source_type="quick use", item_type=ItemType.GADGET, description="homing explosive")
     payload = as_item_payload(item)
     assert payload["description"] == "homing explosive"
+
+
+def test_special_weapon_type_is_supported() -> None:
+    equalizer = _item(source_id="equalizer", source_type="special", item_type=ItemType.COMPONENT)
+    assert is_weapon(equalizer)

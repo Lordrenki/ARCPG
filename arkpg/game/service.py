@@ -428,8 +428,6 @@ async def craft_item(session: AsyncSession, discord_id: int, item_id: int, qty: 
     item = await session.get(Item, item_id)
     if item is None:
         raise ValueError("Item not found.")
-    if not is_craftable_item(item):
-        raise ValueError("This item cannot be crafted.")
 
     recipe = crafting_recipe_for_item(item)
     crafted_source_id = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
@@ -441,6 +439,8 @@ async def craft_item(session: AsyncSession, discord_id: int, item_id: int, qty: 
 
     required_blueprint_source_id = f"{crafted_source_id}_blueprint"
     blueprint_item = source_map.get(required_blueprint_source_id)
+    if not is_craftable_item(item) and blueprint_item is None:
+        raise ValueError("This item cannot be crafted.")
     if blueprint_item is not None:
         owned_blueprint = (
             await session.execute(

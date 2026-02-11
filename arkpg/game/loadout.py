@@ -3,8 +3,15 @@ from __future__ import annotations
 from arkpg.db.models import Item, ItemType
 
 WEAPON_TYPES = {
-    "rifle", "burst rifle", "smg", "shotgun", "sniper", "lmg", "pistol", "hand cannon", "bow",
-    "weapon", "melee", "launcher", "arc weapon", "assault rifle", "battle rifle", "sniper rifle", "special",
+    "assault rifle",
+    "battle rifle",
+    "hand cannon",
+    "lmg",
+    "pistol",
+    "shotgun",
+    "smg",
+    "sniper rifle",
+    "special",
 }
 
 HEALING_ITEM_FLAT = {
