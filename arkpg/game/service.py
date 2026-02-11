@@ -23,7 +23,7 @@ from arkpg.game.deployments import deployment_end, make_seed, resolve_deployment
 from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
 from arkpg.game.economy import compute_idle_rewards, level_from_xp, scale_stats_with_level
 from arkpg.game.profile_backgrounds import DEFAULT_BACKGROUND_ID, normalize_collected_background_ids
-from arkpg.game.loadout import as_item_payload, gadget_utility_from_payload, healing_amount, item_power_from_payload, shield_reduction
+from arkpg.game.loadout import as_item_payload, gadget_utility_from_payload, healing_amount, is_shield, is_weapon, item_power_from_payload, shield_reduction
 from arkpg.game.progression import EventBus
 
 
@@ -420,6 +420,23 @@ async def get_user_inventory_items(session: AsyncSession, user: User) -> list[tu
     return (await session.execute(select(Inventory, Item).join(Item, Inventory.item_id == Item.id).where(Inventory.user_id == user.id))).all()
 
 
+
+
+def _blueprint_source_ids_for_item(item: Item) -> list[str]:
+    crafted_source_id = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
+    if not crafted_source_id:
+        return []
+
+    if is_shield(item) and crafted_source_id in {"medium_shield", "heavy_shield"}:
+        return []
+
+    candidates: list[str] = [f"{crafted_source_id}_blueprint"]
+    if is_weapon(item) and "_t" in crafted_source_id:
+        base_source_id = crafted_source_id.rsplit("_t", 1)[0]
+        if base_source_id:
+            candidates.append(f"{base_source_id}_blueprint")
+    return candidates
+
 async def craft_item(session: AsyncSession, discord_id: int, item_id: int, qty: int = 1) -> dict:
     if qty <= 0:
         raise ValueError("Craft quantity must be positive.")
@@ -437,8 +454,8 @@ async def craft_item(session: AsyncSession, discord_id: int, item_id: int, qty: 
     source_items = (await session.execute(select(Item))).scalars().all()
     source_map = {str((x.metadata_json or {}).get("source_id") or "").lower(): x for x in source_items}
 
-    required_blueprint_source_id = f"{crafted_source_id}_blueprint"
-    blueprint_item = source_map.get(required_blueprint_source_id)
+    blueprint_candidates = _blueprint_source_ids_for_item(item)
+    blueprint_item = next((source_map[sid] for sid in blueprint_candidates if sid in source_map), None)
     if not is_craftable_item(item) and blueprint_item is None:
         raise ValueError("This item cannot be crafted.")
     if blueprint_item is not None:

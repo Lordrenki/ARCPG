@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from arkpg.db.models import Item
-from arkpg.game.loadout import is_gadget, is_healing, is_weapon
+from arkpg.game.loadout import is_gadget, is_healing, is_shield, is_weapon
 
 RARITY_TIER = {"common": 1, "uncommon": 2, "rare": 3, "epic": 4, "legendary": 5}
 
 
 def is_craftable_item(item: Item) -> bool:
-    return is_weapon(item) or is_gadget(item) or is_healing(item)
+    return is_weapon(item) or is_gadget(item) or is_healing(item) or is_shield(item)
 
 
 def crafting_recipe_for_item(item: Item) -> list[tuple[str, int]]:
@@ -25,6 +25,18 @@ def crafting_recipe_for_item(item: Item) -> list[tuple[str, int]]:
             ("chemicals", 1 + tier),
             ("fabric", 1 + tier),
         ]
+
+    if is_shield(item):
+        # Keep medium/heavy shield crafting accessible but expensive.
+        recipe = [
+            ("metal_parts", 2 + tier),
+            ("wires", 2 + tier),
+            ("battery", 1 + tier),
+            ("electrical_components", 1 + tier),
+        ]
+        if source_id == "heavy_shield":
+            recipe.append(("arc_alloy", 1 + max(0, tier - 3)))
+        return recipe
 
     if is_weapon(item):
         recipe = [

@@ -37,3 +37,11 @@ def test_deployment_loot_can_favor_fabric() -> None:
         for idx in range(30)
     )
     assert had_fabric
+
+
+def test_deployment_industrial_loot_can_include_electrical_components_stack() -> None:
+    found_stack = any(
+        any(item["name"] == "Electrical Components" and item["qty"] >= 2 for item in resolve_deployment(f"electrical-seed-{idx}", "Industrial", level=8).loot)
+        for idx in range(120)
+    )
+    assert found_stack
