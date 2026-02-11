@@ -909,20 +909,28 @@ class GameplayCog(commands.Cog):
         return picks
 
     async def inventory_healing_item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[int]]:
-        picks = await self.inventory_item_autocomplete(interaction, current)
-        out: list[app_commands.Choice[int]] = []
         async with SessionLocal() as session:
-            ids = [choice.value for choice in picks]
-            if not ids:
-                return []
-            items = (await session.execute(select(Item).where(Item.id.in_(ids)))).scalars().all()
-            by_id = {item.id: item for item in items}
+            user = await get_or_create_user(session, interaction.user.id)
+            rows = (
+                await session.execute(
+                    select(Inventory, Item)
+                    .join(Item, Inventory.item_id == Item.id)
+                    .where(and_(Inventory.user_id == user.id, Inventory.weapon_level.is_(None), Inventory.qty > 0))
+                    .order_by(Item.name.asc())
+                )
+            ).all()
 
-        for choice in picks:
-            item = by_id.get(choice.value)
-            if item and is_healing(item):
-                out.append(choice)
-        return out
+        needle = current.strip().lower()
+        picks: list[app_commands.Choice[int]] = []
+        for inv, item in rows:
+            if not is_healing(item):
+                continue
+            if needle and needle not in item.name.lower() and needle not in str(item.id):
+                continue
+            picks.append(app_commands.Choice(name=f"{item.name} (ID {item.id}) x{inv.qty}", value=item.id))
+            if len(picks) >= 25:
+                break
+        return picks
 
     async def craftable_item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[int]]:
         async with SessionLocal() as session:
@@ -1543,13 +1551,15 @@ class GameplayCog(commands.Cog):
     @app_commands.command(description="Use a healing item from your inventory to restore HP.")
     @app_commands.autocomplete(item_id=inventory_healing_item_autocomplete)
     async def heal(self, interaction: discord.Interaction, item_id: int, qty: app_commands.Range[int, 1, 10] = 1) -> None:
+        await interaction.response.defer(ephemeral=True)
+
         async with SessionLocal() as session:
             user = await get_or_create_user(session, interaction.user.id)
             stats = dict(user.stats or {})
             max_hp = int(stats.get("max_health", 100) or 100)
             hp = int(stats.get("health", max_hp) if stats.get("health") is not None else max_hp)
             if hp >= max_hp:
-                await interaction.response.send_message("Your HP is already full.", ephemeral=True)
+                await interaction.followup.send("Your HP is already full.", ephemeral=True)
                 return
 
             row = (
@@ -1560,15 +1570,15 @@ class GameplayCog(commands.Cog):
                 )
             ).first()
             if row is None:
-                await interaction.response.send_message("You do not own that item.", ephemeral=True)
+                await interaction.followup.send("You do not own that item.", ephemeral=True)
                 return
 
             inv, item = row
             if not is_healing(item):
-                await interaction.response.send_message("That item is not a healing item.", ephemeral=True)
+                await interaction.followup.send("That item is not a healing item.", ephemeral=True)
                 return
             if inv.qty < qty:
-                await interaction.response.send_message("Not enough quantity in inventory.", ephemeral=True)
+                await interaction.followup.send("Not enough quantity in inventory.", ephemeral=True)
                 return
 
             sid = str((item.metadata_json or {}).get("source_id") or "").lower()
@@ -1590,7 +1600,10 @@ class GameplayCog(commands.Cog):
         embed.add_field(name="Item", value=f"{item.name} x{qty}", inline=True)
         embed.add_field(name="HP Restored", value=str(applied), inline=True)
         embed.add_field(name="Current HP", value=f"{new_hp}", inline=True)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        try:
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except discord.NotFound:
+            return
 
     @app_commands.command(description="Create a squad.")
     async def squad_create(self, interaction: discord.Interaction, name: str) -> None:
