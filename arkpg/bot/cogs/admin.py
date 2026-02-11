@@ -123,7 +123,7 @@ class AdminCog(commands.Cog):
         await interaction.response.send_message(f"Granted **{item_row.name} x{qty}** to yourself.", ephemeral=True)
 
 
-    @app_commands.command(description="Admin: list item categories and sample names.")
+    @app_commands.command(description="Admin: list item categories and item names from the seeded DB catalog.")
     async def items(self, interaction: discord.Interaction, category: str | None = None) -> None:
         if not self.is_admin(interaction):
             await interaction.response.send_message("This admin command is restricted.", ephemeral=True)
@@ -141,15 +141,40 @@ class AdminCog(commands.Cog):
             grouped.setdefault(key, []).append((row.id, row.name))
 
         if category:
-            names = grouped.get(category.lower())
+            normalized = category.lower().strip()
+            aliases = {
+                "weapons": "weapon",
+                "armors": "armor",
+                "gadgets": "gadget",
+                "components": "component",
+                "blueprints": "blueprint",
+                "recyclables": "recyclable",
+                "materials": "component",
+                "crafting_materials": "component",
+            }
+            normalized = aliases.get(normalized, normalized)
+            names = grouped.get(normalized)
             if not names:
                 await interaction.response.send_message("Unknown category. Use weapon, armor, gadget, component, blueprint, recyclable.", ephemeral=True)
                 return
-            preview = "\n".join(f"• `{item_id}` — {name}" for item_id, name in names[:40])
-            await interaction.response.send_message(f"**{category.title()} Items ({len(names)})**\n{preview}", ephemeral=True)
+            preview = "\n".join(f"{index}. `{item_id}` — {name}" for index, (item_id, name) in enumerate(names, start=1))
+            chunks: list[str] = []
+            current_chunk = f"**{normalized.replace('_', ' ').title()} Items ({len(names)})**\n"
+            for line in preview.splitlines():
+                if len(current_chunk) + len(line) + 1 > 1800:
+                    chunks.append(current_chunk)
+                    current_chunk = ""
+                current_chunk += f"{line}\n"
+            if current_chunk:
+                chunks.append(current_chunk)
+
+            await interaction.response.send_message(chunks[0].rstrip(), ephemeral=True)
+            for extra in chunks[1:]:
+                await interaction.followup.send(extra.rstrip(), ephemeral=True)
             return
 
-        lines = [f"• **{k.title()}**: {len(v)} items" for k, v in grouped.items()]
+        lines = [f"• **{k.title()}**: {len(v)} items" for k, v in sorted(grouped.items())]
+        lines.append("\nUse `/items category:<name>` to list every item in a category with stable numbering.")
         await interaction.response.send_message("Item catalog loaded from DB:\n" + "\n".join(lines), ephemeral=True)
 
 
