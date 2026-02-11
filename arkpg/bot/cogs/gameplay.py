@@ -68,6 +68,13 @@ ADMIN_GUILD_ID = 927355923314380901
 ADMIN_PROFILE_BACKGROUND_PATH = Path(__file__).resolve().parents[2] / "assets" / "admin_staff_team.png"
 DUEL_COOLDOWN_SECONDS = 300
 TRADE_REF_KEY = "trade_ref"
+DEPLOYMENT_CHOICES = [
+    app_commands.Choice(
+        name=f"{zone} • Risk {int(cfg['risk'] * 100)}% • {int(cfg['duration_min'])} min",
+        value=zone,
+    )
+    for zone, cfg in ZONE_CONFIG.items()
+]
 
 
 def _trade_ref(trade: Trade) -> str:
@@ -246,12 +253,47 @@ class RaidEncounterView(discord.ui.View):
         self.state = state
         self.rng = random.Random(rng_seed)
 
+    async def _consume_raid_bandage(self, discord_id: int) -> bool:
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, discord_id)
+            rows = (
+                await session.execute(
+                    select(Inventory, Item)
+                    .join(Item, Inventory.item_id == Item.id)
+                    .where(
+                        and_(
+                            Inventory.user_id == user.id,
+                            Inventory.weapon_level.is_(None),
+                            Inventory.qty > 0,
+                        )
+                    )
+                    .order_by(Item.base_value.asc())
+                )
+            ).all()
+
+            bandage_row = next(
+                (row for row in rows if "bandage" in str((row[1].metadata_json or {}).get("source_id") or "").lower()),
+                None,
+            )
+            if bandage_row is None:
+                return False
+
+            inv, _item = bandage_row
+            inv.qty -= 1
+            if inv.qty <= 0:
+                await session.delete(inv)
+            await session.commit()
+            return True
+
     async def _run_action(self, interaction: discord.Interaction, action: RaidAction) -> None:
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("This raid belongs to another player.", ephemeral=True)
             return
 
-        result = resolve_action(self.state, action, self.rng)
+        can_heal = True
+        if action == "heal" and self.state.heals_left > 0:
+            can_heal = await self._consume_raid_bandage(interaction.user.id)
+        result = resolve_action(self.state, action, self.rng, can_heal=can_heal)
         embed = self.cog._raid_embed(self.state, "\n".join(result.lines))
 
         if result.raid_over:
@@ -735,7 +777,7 @@ class GameplayCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Start a deployment.")
-    @app_commands.choices(zone=[app_commands.Choice(name=zone, value=zone) for zone in ZONE_CONFIG.keys()])
+    @app_commands.choices(zone=DEPLOYMENT_CHOICES)
     async def deploy(self, interaction: discord.Interaction, zone: str) -> None:
         if zone not in ZONE_CONFIG:
             await interaction.response.send_message("Unknown zone. Choose Residential, Industrial, or ARC Site.", ephemeral=True)
@@ -837,9 +879,23 @@ class GameplayCog(commands.Cog):
             if remaining_qty > 0:
                 visible_rows.append((inv, item, remaining_qty))
 
-        embed = self._styled_embed(title="Field Inventory")
-        embed.description = "\n".join(f"• {item.name} x{remaining_qty}" for _inv, item, remaining_qty in visible_rows[:20]) if visible_rows else "Your stash is empty."
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        if not visible_rows:
+            embed = self._styled_embed(title="Field Inventory", description="Your stash is empty.")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        page_size = 20
+        pages: list[discord.Embed] = []
+        total_pages = max(1, (len(visible_rows) + page_size - 1) // page_size)
+        for index in range(total_pages):
+            chunk = visible_rows[index * page_size : (index + 1) * page_size]
+            page = self._styled_embed(title="Field Inventory")
+            page.description = "\n".join(f"• {item.name} x{remaining_qty}" for _inv, item, remaining_qty in chunk)
+            page.set_footer(text=f"Page {index + 1}/{total_pages}")
+            pages.append(page)
+
+        view = PaginatedEmbedView(owner_id=interaction.user.id, pages=pages)
+        await interaction.response.send_message(embed=view.current_embed(), view=view, ephemeral=True)
 
     @app_commands.command(description="View your equipped combat loadout.")
     async def loadout(self, interaction: discord.Interaction) -> None:
@@ -1549,6 +1605,46 @@ class GameplayCog(commands.Cog):
             embed.add_field(name="Utility Power", value=str(utility_power), inline=True)
 
         await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(description="Sell an item from your inventory for Scrap.")
+    @app_commands.autocomplete(item_id=inventory_item_autocomplete)
+    async def sell(self, interaction: discord.Interaction, item_id: int, qty: app_commands.Range[int, 1, 999] = 1) -> None:
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, interaction.user.id)
+            row = (
+                await session.execute(
+                    select(Inventory, Item)
+                    .join(Item, Inventory.item_id == Item.id)
+                    .where(
+                        and_(
+                            Inventory.user_id == user.id,
+                            Inventory.item_id == item_id,
+                            Inventory.weapon_level.is_(None),
+                            Inventory.qty > 0,
+                        )
+                    )
+                )
+            ).first()
+            if row is None:
+                await interaction.response.send_message("You do not own that item.", ephemeral=True)
+                return
+
+            inv, item = row
+            if inv.qty < qty:
+                await interaction.response.send_message("Not enough quantity in inventory.", ephemeral=True)
+                return
+
+            scrap = int(item.base_value) * int(qty)
+            inv.qty -= qty
+            if inv.qty <= 0:
+                await session.delete(inv)
+            user.credits += scrap
+            await session.commit()
+
+        embed = self._styled_embed(title="Item Sold")
+        embed.add_field(name="Item", value=f"{item.name} x{qty}", inline=True)
+        embed.add_field(name="Scrap Gained", value=f"+{scrap}", inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Craft a weapon, gadget/throwable, or healing item.")
     @app_commands.autocomplete(item_id=craftable_item_autocomplete)

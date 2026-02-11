@@ -29,6 +29,15 @@ def deployment_end(zone: str, now: datetime | None = None) -> datetime:
     return now + timedelta(minutes=mins)
 
 
+def _zone_bonus_qty(zone: str, rarity: str, rng) -> int:
+    qty = 1
+    if zone == "ARC Site" and rarity in {"rare", "epic", "legendary"} and rng.random() < 0.35:
+        qty += 1
+    elif zone == "Industrial" and rarity in {"uncommon", "rare", "epic"} and rng.random() < 0.2:
+        qty += 1
+    return qty
+
+
 def resolve_deployment(seed: str, zone: str, level: int, extract_late: bool = False, loadout_power: float = 0.0) -> DeploymentResolution:
     cfg = ZONE_CONFIG[zone]
     roller = LootRoller(seed)
@@ -40,15 +49,17 @@ def resolve_deployment(seed: str, zone: str, level: int, extract_late: bool = Fa
         return DeploymentResolution("failure", 0, int(20 * cfg["reward_mult"]), [], 20, event, int(35 + cfg["reward_mult"] * 14))
 
     partial = success_roll < risk
-    loot_count = 1 if partial else roller.rng.randint(2, 4)
+    base_loot = max(2, int(cfg["duration_min"] / 22))
+    loot_count = 1 if partial else roller.rng.randint(base_loot, base_loot + 2)
     zone_items = filter_items_for_zone(zone)
     fabric_matches = [item for item in zone_items if item.id == "fabric"]
     electrical_component_matches = [item for item in zone_items if item.id == "electrical_components"]
-    loot = []
+    loot: list[dict] = []
+
     for _ in range(loot_count):
         if fabric_matches and roller.rng.random() < 0.3:
             picked = roller.rng.choice(fabric_matches)
-            loot.append({"name": picked.name, "rarity": picked.rarity, "qty": 1})
+            loot.append({"name": picked.name, "rarity": picked.rarity, "qty": _zone_bonus_qty(zone, picked.rarity, roller.rng)})
             continue
 
         if zone == "Industrial" and electrical_component_matches and roller.rng.random() < 0.18:
@@ -62,7 +73,7 @@ def resolve_deployment(seed: str, zone: str, level: int, extract_late: bool = Fa
         if not matching:
             matching = [item for item in zone_items if item.rarity in {"common", "uncommon", "rare", "epic", "legendary"}]
         picked = roller.rng.choice(matching)
-        loot.append({"name": picked.name, "rarity": picked.rarity, "qty": 1})
+        loot.append({"name": picked.name, "rarity": picked.rarity, "qty": _zone_bonus_qty(zone, picked.rarity, roller.rng)})
 
     credits = int((75 + level * 8) * cfg["reward_mult"] * (0.65 if partial else 1.0))
     xp = int((95 + level * 12) * cfg["reward_mult"] * (0.75 if partial else 1.0))
