@@ -35,6 +35,7 @@ from arkpg.db.models import (
     AuditLog,
     UserQuest,
     UserTitle,
+    BossNotificationSubscription,
 )
 from arkpg.db.session import SessionLocal
 from arkpg.game.constants import RARITY_COLORS, ZONE_CONFIG
@@ -253,6 +254,11 @@ class BossSignupView(discord.ui.View):
         msg = await self.cog.remove_boss_participant(self.guild_id, self.spawn_id, interaction.user.id)
         await interaction.response.send_message(msg, ephemeral=True)
 
+    @discord.ui.button(label="Notify", style=discord.ButtonStyle.primary)
+    async def notify(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        msg = await self.cog.toggle_boss_notification_opt_in(self.guild_id, interaction.user.id)
+        await interaction.response.send_message(msg, ephemeral=True)
+
 
 class GameplayCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -349,14 +355,59 @@ class GameplayCog(commands.Cog):
             return True
         return False
 
+    def _guild_boss_rng(self, guild_id: int) -> random.Random:
+        return random.Random((guild_id * 1_000_003) ^ int(self._boss_rng.random() * 1_000_000))
+
     async def _ensure_boss_schedule(self, guild_id: int) -> dict:
         state = self._boss_state.setdefault(guild_id, {})
         if not state.get("next_spawn"):
-            state["next_spawn"] = datetime.now(timezone.utc) + timedelta(minutes=self._boss_rng.randint(30, 60))
+            guild_rng = self._guild_boss_rng(guild_id)
+            state["next_spawn"] = datetime.now(timezone.utc) + timedelta(minutes=guild_rng.randint(30, 60))
             state["warned"] = False
             state["participants"] = set()
             state["spawn_id"] = f"{guild_id}-{int(state['next_spawn'].timestamp())}"
         return state
+
+    async def toggle_boss_notification_opt_in(self, guild_id: int, discord_id: int) -> str:
+        async with SessionLocal() as session:
+            existing = (
+                await session.execute(
+                    select(BossNotificationSubscription).where(
+                        and_(
+                            BossNotificationSubscription.guild_id == guild_id,
+                            BossNotificationSubscription.discord_id == discord_id,
+                        )
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing:
+                await session.delete(existing)
+                await session.commit()
+                return "Boss DM notifications disabled for this server."
+
+            session.add(BossNotificationSubscription(guild_id=guild_id, discord_id=discord_id))
+            await session.commit()
+            return "Boss DM notifications enabled for this server."
+
+    async def _notify_boss_subscribers(self, guild: discord.Guild, signup_message: discord.Message) -> None:
+        async with SessionLocal() as session:
+            rows = (
+                await session.execute(
+                    select(BossNotificationSubscription).where(BossNotificationSubscription.guild_id == guild.id)
+                )
+            ).scalars().all()
+
+        jump_link = signup_message.jump_url
+        for row in rows:
+            member = guild.get_member(row.discord_id)
+            if member is None:
+                continue
+            try:
+                await member.send(
+                    f"Boss signup is live in **{guild.name}**. Join here: {jump_link}"
+                )
+            except discord.Forbidden:
+                continue
 
     async def add_boss_participant(self, guild_id: int, spawn_id: str, discord_id: int) -> str:
         state = self._boss_state.get(guild_id)
@@ -477,11 +528,13 @@ class GameplayCog(commands.Cog):
                 state["warned"] = True
                 state["participants"] = set()
                 view = BossSignupView(self, guild.id, state["spawn_id"])
-                await channel.send("Boss contact in ~5 minutes. Click below to participate.", view=view)
+                signup_message = await channel.send("Boss contact in ~5 minutes. Click below to participate.", view=view)
+                await self._notify_boss_subscribers(guild, signup_message)
             if now >= spawn_at:
                 await self._run_boss_fight(guild, channel, state)
+                guild_rng = self._guild_boss_rng(guild.id)
                 self._boss_state[guild.id] = {
-                    "next_spawn": now + timedelta(minutes=self._boss_rng.randint(30, 60)),
+                    "next_spawn": now + timedelta(minutes=guild_rng.randint(30, 60)),
                     "warned": False,
                     "participants": set(),
                     "spawn_id": f"{guild.id}-{int(now.timestamp())}",
@@ -770,10 +823,13 @@ class GameplayCog(commands.Cog):
         async with SessionLocal() as session:
             rows = (await session.execute(select(Item).order_by(Item.name.asc()))).scalars().all()
 
+        source_ids = {str((row.metadata_json or {}).get("source_id") or "").strip().lower() for row in rows}
         needle = current.strip().lower()
         picks: list[app_commands.Choice[int]] = []
         for item in rows:
-            if not is_craftable_item(item):
+            source_id = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
+            has_blueprint = bool(source_id) and f"{source_id}_blueprint" in source_ids
+            if not is_craftable_item(item) and not has_blueprint:
                 continue
             if needle and needle not in item.name.lower() and needle not in str(item.id):
                 continue

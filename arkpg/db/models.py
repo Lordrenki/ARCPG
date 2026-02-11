@@ -175,6 +175,19 @@ class GameConfig(Base):
     boss_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
+class BossNotificationSubscription(Base):
+    __tablename__ = "boss_notification_subscriptions"
+    __table_args__ = (
+        UniqueConstraint("guild_id", "discord_id", name="uq_boss_notification_subscription"),
+        Index("ix_boss_notification_subscription_guild_id", "guild_id"),
+        Index("ix_boss_notification_subscription_discord_id", "discord_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    discord_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
 class Title(Base):
     __tablename__ = "titles"
 
