@@ -908,6 +908,21 @@ class GameplayCog(commands.Cog):
                 break
         return picks
 
+    async def all_item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[int]]:
+        async with SessionLocal() as session:
+            await SeederService.ensure_seed_data(session)
+            rows = (await session.execute(select(Item).order_by(Item.name.asc()))).scalars().all()
+
+        needle = current.strip().lower()
+        picks: list[app_commands.Choice[int]] = []
+        for item in rows:
+            if needle and needle not in item.name.lower() and needle not in str(item.id):
+                continue
+            picks.append(app_commands.Choice(name=f"{item.name} (ID {item.id})", value=item.id))
+            if len(picks) >= 25:
+                break
+        return picks
+
     async def inventory_healing_item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[int]]:
         async with SessionLocal() as session:
             user = await get_or_create_user(session, interaction.user.id)
@@ -1497,9 +1512,10 @@ class GameplayCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Show public item stats and combat-relevant effects.")
-    @app_commands.autocomplete(item_id=inventory_item_autocomplete)
+    @app_commands.autocomplete(item_id=all_item_autocomplete)
     async def iteminfo(self, interaction: discord.Interaction, item_id: int) -> None:
         async with SessionLocal() as session:
+            await SeederService.ensure_seed_data(session)
             item = await session.get(Item, item_id)
             if item is None:
                 await interaction.response.send_message("Unknown item id.", ephemeral=True)
