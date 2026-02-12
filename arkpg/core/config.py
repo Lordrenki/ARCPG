@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     sync_commands_guild_id: int | None = Field(default=None, alias="SYNC_COMMANDS_GUILD_ID")
 
     idle_claim_cap_hours: int = Field(default=24, alias="IDLE_CLAIM_CAP_HOURS")
+    idle_claim_cooldown_minutes: int = Field(default=15, alias="IDLE_CLAIM_COOLDOWN_MINUTES")
     idle_xp_per_minute: int = Field(default=2, alias="IDLE_XP_PER_MINUTE")
     idle_credits_per_minute: int = Field(default=1, alias="IDLE_CREDITS_PER_MINUTE")
     deployment_auto_extract_minutes: int = Field(default=60, alias="DEPLOYMENT_AUTO_EXTRACT_MINUTES")
