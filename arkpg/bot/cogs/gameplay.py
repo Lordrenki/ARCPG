@@ -445,10 +445,11 @@ class GameplayCog(commands.Cog):
     async def _block_if_down(self, interaction: discord.Interaction, session, *, action_label: str) -> bool:
         user = await get_or_create_user(session, interaction.user.id)
         if self._is_down(user):
-            await interaction.response.send_message(
-                f"You are at 0 HP and cannot {action_label}. Use /heal to recover.",
-                ephemeral=True,
-            )
+            msg = f"You are at 0 HP and cannot {action_label}. Use /heal to recover."
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
             return True
         return False
 
@@ -1538,6 +1539,7 @@ class GameplayCog(commands.Cog):
 
     @app_commands.command(description="Run a short scavenge for small loot.")
     async def scavenge(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
         async with SessionLocal() as session:
             if await self._block_if_down(interaction, session, action_label="scavenge"):
                 return
@@ -1547,9 +1549,9 @@ class GameplayCog(commands.Cog):
                 await EventBus.emit(session, user, "SCAVENGE_COMPLETED", {"counter_updates": {"scavenge_runs": 1, "activity_credits_earned": result.credits}})
                 await session.commit()
             except ValueError as exc:
-                await interaction.response.send_message(str(exc))
+                await interaction.followup.send(str(exc))
                 return
-        await interaction.response.send_message(result.message)
+        await interaction.followup.send(result.message)
 
     @app_commands.command(description="Convert recyclables into scraps/materials.")
     @app_commands.describe(item="Pick an inventory item to salvage (autocomplete enabled)")
@@ -1620,13 +1622,14 @@ class GameplayCog(commands.Cog):
     @app_commands.command(description="Show crafting requirements for an item.")
     @app_commands.autocomplete(item_id=craftable_item_autocomplete)
     async def craft_info(self, interaction: discord.Interaction, item_id: int) -> None:
+        await interaction.response.defer(ephemeral=True)
         async with SessionLocal() as session:
             item = await session.get(Item, item_id)
             if item is None:
-                await interaction.response.send_message("Unknown item id.", ephemeral=True)
+                await interaction.followup.send("Unknown item id.", ephemeral=True)
                 return
             if not is_craftable_item(item):
-                await interaction.response.send_message("This item is not craftable.", ephemeral=True)
+                await interaction.followup.send("This item is not craftable.", ephemeral=True)
                 return
             source_items = (await session.execute(select(Item))).scalars().all()
             source_map = {str((x.metadata_json or {}).get("source_id") or "").lower(): x for x in source_items}
@@ -1635,7 +1638,7 @@ class GameplayCog(commands.Cog):
         embed.description = "\n".join(
             f"• {source_map[source_id].name if source_id in source_map else source_id} x{qty}" for source_id, qty in recipe
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(description="Show public item stats and combat-relevant effects.")
     @app_commands.autocomplete(item_id=all_item_autocomplete)
