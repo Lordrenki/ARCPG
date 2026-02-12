@@ -46,6 +46,10 @@ _WORK_SCENARIOS = [
     ("Scrubbed rust off old ARC drone parts.", 60, 165),
 ]
 
+_SALVAGE_COMPONENT_CONVERSIONS: dict[str, tuple[str, int]] = {
+    "advanced_electrical_components": ("electrical_components", 1),
+}
+
 
 def as_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
@@ -368,6 +372,16 @@ class ActivityService:
         user.credits += credits
         jackpot = rng.random() < 0.15
         reward_items: list[tuple[int, int]] = []
+        salvaged_source_id = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
+        conversion_reward = _SALVAGE_COMPONENT_CONVERSIONS.get(salvaged_source_id)
+        if conversion_reward:
+            converted_source_id, converted_qty = conversion_reward
+            converted_item = (
+                await self.session.execute(select(Item).where(Item.metadata_json["source_id"].as_string() == converted_source_id).limit(1))
+            ).scalar_one_or_none()
+            if converted_item is not None:
+                await InventoryService(self.session).add_item(user.id, converted_item.id, converted_qty)
+                reward_items.append((converted_item.id, converted_qty))
         if jackpot:
             refined = (await self.session.execute(select(Item).where(Item.base_value >= 120).limit(1))).scalar_one_or_none()
             if refined:
