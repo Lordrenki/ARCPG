@@ -111,6 +111,17 @@ async def ensure_starter_kit(session: AsyncSession, user: User) -> None:
     stats["starter_kit_initialized"] = True
     user.stats = stats
 
+
+def can_receive_start_kit(user: User) -> bool:
+    stats = dict(user.stats or {}) if isinstance(user.stats, dict) else {}
+    return not bool(stats.get("start_command_used"))
+
+
+def mark_start_command_used(user: User) -> None:
+    stats = dict(user.stats or {}) if isinstance(user.stats, dict) else {}
+    stats["start_command_used"] = True
+    user.stats = stats
+
 async def claim_idle(session: AsyncSession, settings: Settings, discord_id: int) -> tuple[User, int, int, int]:
     user = await get_or_create_user(session, discord_id)
     now = datetime.now(timezone.utc)

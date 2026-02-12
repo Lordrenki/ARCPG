@@ -48,6 +48,7 @@ from arkpg.game.bosses import FLAVOR_CRITS, FLAVOR_DAMAGE, FLAVOR_SUPPORT, rando
 from arkpg.game.raids import RaidAction, RaidState, begin_raid, raid_rewards, resolve_action, strip_equipped_loadout
 from arkpg.game.service import (
     atomic_trade_confirm,
+    can_receive_start_kit,
     claim_idle,
     craft_item,
     equip_loadout_item,
@@ -56,6 +57,7 @@ from arkpg.game.service import (
     get_equipped_loadout,
     collect_profile_background,
     get_or_create_user,
+    mark_start_command_used,
     normalized_profile,
     start_deployment,
     update_user_profile,
@@ -754,8 +756,9 @@ class GameplayCog(commands.Cog):
             existing = (await session.execute(select(User).where(User.discord_id == interaction.user.id))).scalar_one_or_none()
             user = await get_or_create_user(session, interaction.user.id)
             await SeederService.ensure_seed_data(session)
-            if existing is None:
+            if can_receive_start_kit(user):
                 await ensure_starter_kit(session, user)
+            mark_start_command_used(user)
             await session.commit()
 
         profile = normalized_profile(user)
