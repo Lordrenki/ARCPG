@@ -45,7 +45,15 @@ from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
 from arkpg.game.economy import level_from_xp
 from arkpg.game.loadout import HEALING_ITEM_FLAT, SHIELD_DAMAGE_REDUCTION, gadget_utility_from_payload, is_gadget, is_healing, is_shield, is_weapon, source_type
 from arkpg.game.bosses import FLAVOR_CRITS, FLAVOR_DAMAGE, FLAVOR_SUPPORT, random_boss, weighted_damage_roll
-from arkpg.game.raids import RaidAction, RaidState, begin_raid, raid_rewards, resolve_action, strip_equipped_loadout
+from arkpg.game.raids import (
+    RaidAction,
+    RaidState,
+    begin_raid,
+    raid_rewards,
+    resolve_action,
+    should_lose_gear_on_raid_failure,
+    strip_equipped_loadout,
+)
 from arkpg.game.service import (
     atomic_trade_confirm,
     can_receive_start_kit,
@@ -470,8 +478,12 @@ class GameplayCog(commands.Cog):
                 line = f"Victory. +{xp_reward} XP and +{scrap_reward} Scrap secured."
             else:
                 hp_loss = max(0, state.player_max_hp - state.player_hp)
-                stripped_loadout, lost_items = strip_equipped_loadout(stats.get("loadout"))
-                stats["loadout"] = stripped_loadout
+                if should_lose_gear_on_raid_failure(state.player_hp):
+                    stripped_loadout, lost_items = strip_equipped_loadout(stats.get("loadout"))
+                    stats["loadout"] = stripped_loadout
+                else:
+                    lost_items = []
+
                 if lost_items:
                     line = (
                         f"Raid failed. You withdraw with {state.player_hp} HP remaining (damage taken: {hp_loss}). "
