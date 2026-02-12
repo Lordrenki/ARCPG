@@ -204,3 +204,7 @@ def strip_equipped_loadout(loadout: dict | None) -> tuple[dict, list[str]]:
             lost_names.append(str(payload.get("name") or f"Unknown {slot}"))
 
     return ({"weapons": [], "gadget": None, "healing": None, "shield": None}, lost_names)
+
+
+def should_lose_gear_on_raid_failure(player_hp: int) -> bool:
+    return player_hp <= 0

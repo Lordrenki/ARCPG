@@ -1,6 +1,14 @@
 import random
 
-from arkpg.game.raids import RaidEnemy, RaidState, begin_raid, raid_rewards, resolve_action, strip_equipped_loadout
+from arkpg.game.raids import (
+    RaidEnemy,
+    RaidState,
+    begin_raid,
+    raid_rewards,
+    resolve_action,
+    should_lose_gear_on_raid_failure,
+    strip_equipped_loadout,
+)
 
 
 def test_begin_raid_generates_high_level_enemy() -> None:
@@ -89,3 +97,8 @@ def test_strip_equipped_loadout_clears_all_slots() -> None:
 
     assert stripped == {"weapons": [], "gadget": None, "healing": None, "shield": None}
     assert lost == ["Kettle I", "Pulse Grenade", "Bandage", "Light Shield"]
+
+
+def test_raid_failure_gear_loss_only_on_death() -> None:
+    assert should_lose_gear_on_raid_failure(player_hp=0) is True
+    assert should_lose_gear_on_raid_failure(player_hp=12) is False
