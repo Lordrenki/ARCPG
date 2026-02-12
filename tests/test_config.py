@@ -100,3 +100,12 @@ def test_resolved_database_url_strips_quotes_when_using_database_url_only() -> N
         settings.resolved_database_url
         == "mysql+aiomysql://u552592_JveQ8r1j7d:secret@us.mysql.db.bot-hosting.net:3306/u552592_JveQ8r1j7d"
     )
+
+
+def test_idle_claim_cooldown_minutes_defaults_to_15() -> None:
+    settings = Settings(
+        DISCORD_TOKEN="token",
+        DATABASE_URL="mysql+aiomysql://u:p@host:3306/db",
+    )
+
+    assert settings.idle_claim_cooldown_minutes == 15

@@ -807,7 +807,11 @@ class GameplayCog(commands.Cog):
     async def claim(self, interaction: discord.Interaction) -> None:
         async with SessionLocal() as session:
             await SeederService.ensure_seed_data(session)
-            user, minutes, xp, credits = await claim_idle(session, self.settings, interaction.user.id)
+            try:
+                user, minutes, xp, credits = await claim_idle(session, self.settings, interaction.user.id)
+            except ValueError as exc:
+                await interaction.response.send_message(str(exc), ephemeral=True)
+                return
         embed = self._styled_embed(title="Idle claim complete")
         embed.add_field(name="Recovered Time", value=f"{minutes} min")
         embed.add_field(name="XP", value=f"+{xp}")

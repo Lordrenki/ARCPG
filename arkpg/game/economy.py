@@ -50,3 +50,19 @@ def compute_idle_rewards(
     xp = int(minutes * xp_per_minute * diminishing)
     credits = int(minutes * credits_per_minute * diminishing)
     return minutes, xp, credits
+
+
+def claim_cooldown_remaining_seconds(
+    last_claim_at: datetime | None,
+    now: datetime,
+    cooldown_minutes: int,
+) -> int:
+    if cooldown_minutes <= 0:
+        return 0
+    if last_claim_at is None:
+        return 0
+    if last_claim_at.tzinfo is None:
+        last_claim_at = last_claim_at.replace(tzinfo=timezone.utc)
+    elapsed_seconds = int((now - last_claim_at).total_seconds())
+    required_seconds = cooldown_minutes * 60
+    return max(0, required_seconds - elapsed_seconds)

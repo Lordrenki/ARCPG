@@ -21,7 +21,7 @@ from arkpg.db.models import (
 )
 from arkpg.game.deployments import deployment_end, make_seed, resolve_deployment
 from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
-from arkpg.game.economy import compute_idle_rewards, level_from_xp, scale_stats_with_level
+from arkpg.game.economy import claim_cooldown_remaining_seconds, compute_idle_rewards, level_from_xp, scale_stats_with_level
 from arkpg.game.profile_backgrounds import DEFAULT_BACKGROUND_ID, normalize_collected_background_ids
 from arkpg.game.loadout import as_item_payload, gadget_utility_from_payload, healing_amount, is_shield, is_weapon, item_power_from_payload, shield_reduction
 from arkpg.game.progression import EventBus
@@ -125,6 +125,15 @@ def mark_start_command_used(user: User) -> None:
 async def claim_idle(session: AsyncSession, settings: Settings, discord_id: int) -> tuple[User, int, int, int]:
     user = await get_or_create_user(session, discord_id)
     now = datetime.now(timezone.utc)
+    cooldown_remaining = claim_cooldown_remaining_seconds(
+        user.last_claim_at,
+        now,
+        settings.idle_claim_cooldown_minutes,
+    )
+    if cooldown_remaining > 0:
+        wait_minutes = (cooldown_remaining + 59) // 60
+        raise ValueError(f"Claim is on cooldown. Try again in {wait_minutes} minute(s).")
+
     minutes, xp_gain, credits_gain = compute_idle_rewards(
         user.last_claim_at,
         now,
