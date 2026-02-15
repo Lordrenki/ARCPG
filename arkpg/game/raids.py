@@ -187,8 +187,8 @@ def resolve_action(state: RaidState, action: RaidAction, rng: random.Random, can
 
 
 def raid_rewards(enemy_level: int, rng: random.Random) -> tuple[int, int]:
-    xp = rng.randint(20, 40) + enemy_level
-    scrap = rng.randint(110, 220) + enemy_level * 3
+    xp = rng.randint(40, 75) + int(enemy_level * 1.25)
+    scrap = rng.randint(180, 340) + enemy_level * 5
     return xp, scrap
 
 

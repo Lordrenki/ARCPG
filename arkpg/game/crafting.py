@@ -84,3 +84,17 @@ def crafting_recipe_for_item(item: Item) -> list[tuple[str, int]]:
     if tier >= 4:
         recipe.append(("arc_circuitry", 1))
     return recipe
+
+
+def craftable_items_from_inventory(items: list[Item], inventory_by_source_id: dict[str, int]) -> list[Item]:
+    craftable: list[Item] = []
+    for item in items:
+        source_id = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
+        if not source_id:
+            continue
+        if not is_craftable_item(item):
+            continue
+        recipe = crafting_recipe_for_item(item)
+        if all(int(inventory_by_source_id.get(req_source_id, 0) or 0) >= qty for req_source_id, qty in recipe):
+            craftable.append(item)
+    return craftable

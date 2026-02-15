@@ -320,13 +320,18 @@ class ActivityService:
         await self._check_cd(user.id, "scavenge", 45)
         seed = await self._seed(user.id, "scavenge")
         rng = random.Random(seed)
-        items = (await self.session.execute(select(Item).limit(25))).scalars().all()
+        items = (await self.session.execute(select(Item))).scalars().all()
+        non_weapon_items = [item for item in items if item.type != ItemType.WEAPON]
+        level_one_weapons = [item for item in items if item.type == ItemType.WEAPON and item.name.strip().endswith(" I")]
         fabric_item = next((it for it in items if str((it.metadata_json or {}).get("source_id") or "").strip().lower() == "fabric"), None)
-        if fabric_item and rng.random() < 0.35:
+        if level_one_weapons and rng.random() < 0.04:
+            picked = rng.choice(level_one_weapons)
+            qty = 1
+        elif fabric_item and rng.random() < 0.40:
             picked = fabric_item
-            qty = rng.randint(1, 3)
+            qty = rng.randint(2, 4)
         else:
-            picked = rng.choice(items)
+            picked = rng.choice(non_weapon_items or items)
             qty = rng.randint(1, 2)
         credits = rng.randint(20, 80)
         event = "mini-event triggered" if rng.random() < 0.2 else "quiet pickup"
@@ -431,8 +436,40 @@ class ActivityService:
         scenario, low, high = rng.choice(_WORK_SCENARIOS)
         credits = rng.randint(low, high)
         user.credits += credits
-        self.session.add(ActivityAttempt(user_id=user.id, activity_type="work", seed=seed, result={"credits": credits, "scenario": scenario}))
-        return ActivityResult(seed, True, credits, [], f"{scenario} Earned **{credits}** credits.")
+        xp = rng.randint(15, 35)
+        user.xp += xp
+        user.level = level_from_xp(user.xp)
+
+        bonus_items: list[tuple[int, int]] = []
+        work_runs = int((user.progression_json or {}).get("work_runs", 0))
+        loot_roll_chance = 0.70 + (0.10 if work_runs >= 250 else 0.0) + (0.08 if work_runs >= 500 else 0.0)
+        if rng.random() < min(0.95, loot_roll_chance):
+            candidate_source_ids = ["fabric", "metal_parts", "wires", "battery", "electrical_components"]
+            if work_runs >= 500 and rng.random() < 0.35:
+                candidate_source_ids.append("fabric")
+            src = rng.choice(candidate_source_ids)
+            bonus_item = (
+                await self.session.execute(select(Item).where(Item.metadata_json["source_id"].as_string() == src).limit(1))
+            ).scalar_one_or_none()
+            if bonus_item:
+                qty = rng.randint(1, 3 if src == "fabric" else 2)
+                await InventoryService(self.session).add_item(user.id, bonus_item.id, qty)
+                bonus_items.append((bonus_item.id, qty))
+
+        self.session.add(
+            ActivityAttempt(
+                user_id=user.id,
+                activity_type="work",
+                seed=seed,
+                result={"credits": credits, "scenario": scenario, "xp": xp, "items": bonus_items},
+            )
+        )
+        loot_text = ""
+        if bonus_items:
+            reward_rows = (await self.session.execute(select(Item).where(Item.id.in_([item_id for item_id, _ in bonus_items])))).scalars().all()
+            name_map = {x.id: x.name for x in reward_rows}
+            loot_text = " Loot: " + ", ".join(f"{name_map.get(item_id, 'Unknown')} x{qty}" for item_id, qty in bonus_items)
+        return ActivityResult(seed, True, credits, bonus_items, f"{scenario} Earned **{credits}** credits, **{xp} XP**.{loot_text}")
 
     async def dice(self, user: User, stake: int) -> ActivityResult:
         await self._check_cd(user.id, "dice", _ACTIVITY_COOLDOWNS["dice"])

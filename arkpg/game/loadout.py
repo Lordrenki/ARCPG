@@ -15,7 +15,7 @@ WEAPON_TYPES = {
 }
 
 HEALING_ITEM_FLAT = {
-    "adrenaline_shot": 22,
+    "adrenaline_shot": 65,
     "herbal_bandage": 50,
     "vita_shot": 55,
     "vita_spray": 70,
