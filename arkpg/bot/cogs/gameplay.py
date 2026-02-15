@@ -41,7 +41,7 @@ from arkpg.db.session import SessionLocal
 from arkpg.game.constants import RARITY_COLORS, ZONE_CONFIG
 from arkpg.game.profile_backgrounds import PROFILE_BACKGROUNDS, get_background, save_custom_background
 from arkpg.game.progression import ActivityService, EventBus, ExpeditionService, QuestService, SeederService, TitleService
-from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
+from arkpg.game.crafting import craft_autocomplete_matches, crafting_recipe_for_item, is_craftable_item
 from arkpg.game.economy import level_from_xp
 from arkpg.game.loadout import HEALING_ITEM_FLAT, SHIELD_DAMAGE_REDUCTION, gadget_utility_from_payload, is_gadget, is_healing, is_shield, is_weapon, source_type
 from arkpg.game.bosses import FLAVOR_CRITS, FLAVOR_DAMAGE, FLAVOR_SUPPORT, random_boss, weighted_damage_roll
@@ -1087,14 +1087,13 @@ class GameplayCog(commands.Cog):
             rows = (await session.execute(select(Item).order_by(Item.name.asc()))).scalars().all()
 
         source_ids = {str((row.metadata_json or {}).get("source_id") or "").strip().lower() for row in rows}
-        needle = current.strip().lower()
         picks: list[app_commands.Choice[int]] = []
         for item in rows:
             source_id = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
             has_blueprint = bool(source_id) and f"{source_id}_blueprint" in source_ids
             if not is_craftable_item(item) and not has_blueprint:
                 continue
-            if needle and needle not in item.name.lower() and needle not in str(item.id):
+            if not craft_autocomplete_matches(item, current):
                 continue
             picks.append(app_commands.Choice(name=f"{item.name} (ID {item.id})", value=item.id))
             if len(picks) >= 25:
