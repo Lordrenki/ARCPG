@@ -41,7 +41,7 @@ from arkpg.db.session import SessionLocal
 from arkpg.game.constants import RARITY_COLORS, ZONE_CONFIG
 from arkpg.game.profile_backgrounds import PROFILE_BACKGROUNDS, get_background, save_custom_background
 from arkpg.game.progression import ActivityService, EventBus, ExpeditionService, QuestService, SeederService, TitleService
-from arkpg.game.crafting import craft_autocomplete_matches, crafting_recipe_for_item, is_craftable_item
+from arkpg.game.crafting import craft_autocomplete_matches, craftable_items_from_inventory, crafting_recipe_for_item, is_craftable_item
 from arkpg.game.economy import level_from_xp
 from arkpg.game.loadout import HEALING_ITEM_FLAT, SHIELD_DAMAGE_REDUCTION, gadget_utility_from_payload, is_gadget, is_healing, is_shield, is_weapon, source_type
 from arkpg.game.bosses import FLAVOR_CRITS, FLAVOR_DAMAGE, FLAVOR_SUPPORT, random_boss, weighted_damage_roll
@@ -475,8 +475,50 @@ class GameplayCog(commands.Cog):
                 user.xp += xp_reward
                 user.credits += scrap_reward
                 user.level = level_from_xp(user.xp)
+
+                all_items = (await session.execute(select(Item))).scalars().all()
+                materials = [
+                    item
+                    for item in all_items
+                    if str((item.metadata_json or {}).get("source_id") or "").strip().lower()
+                    in {"fabric", "metal_parts", "wires", "battery", "electrical_components", "chemicals"}
+                ]
+                weapon_drops = [item for item in all_items if item.type.name == "WEAPON" and item.name.strip().endswith(" I")]
+
+                loot_text: list[str] = []
+                if materials:
+                    material = rng.choice(materials)
+                    mat_qty = rng.randint(2, 5) if str((material.metadata_json or {}).get("source_id") or "").strip().lower() == "fabric" else rng.randint(1, 3)
+                    material_stack = (
+                        await session.execute(
+                            select(Inventory).where(
+                                and_(Inventory.user_id == user.id, Inventory.item_id == material.id, Inventory.weapon_level.is_(None))
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if material_stack:
+                        material_stack.qty += mat_qty
+                    else:
+                        session.add(Inventory(user_id=user.id, item_id=material.id, qty=mat_qty))
+                    loot_text.append(f"{material.name} x{mat_qty}")
+
+                if weapon_drops and rng.random() < 0.14:
+                    weapon = rng.choice(weapon_drops)
+                    weapon_stack = (
+                        await session.execute(
+                            select(Inventory).where(
+                                and_(Inventory.user_id == user.id, Inventory.item_id == weapon.id, Inventory.weapon_level.is_(None))
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if weapon_stack:
+                        weapon_stack.qty += 1
+                    else:
+                        session.add(Inventory(user_id=user.id, item_id=weapon.id, qty=1))
+                    loot_text.append(f"{weapon.name} x1")
+
                 await EventBus.emit(session, user, "RAID_COMPLETED", {"counter_updates": {"raids_won": 1, "activity_credits_earned": scrap_reward}})
-                line = f"Victory. +{xp_reward} XP and +{scrap_reward} Scrap secured."
+                line = f"Victory. +{xp_reward} XP and +{scrap_reward} Scrap secured." + (f" Loot: {', '.join(loot_text)}." if loot_text else "")
             else:
                 hp_loss = max(0, state.player_max_hp - state.player_hp)
                 if should_lose_gear_on_raid_failure(state.player_hp):
@@ -634,21 +676,70 @@ class GameplayCog(commands.Cog):
             await channel.send("All raiders went down. The boss withdraws into the storm.")
             return
 
-        winner_discord_id = max(damages, key=damages.get)
+        survivors = sorted(alive)
+        if not survivors:
+            await channel.send("All raiders went down at the finish. No rewards granted.")
+            return
+
+        winner_discord_id = max(survivors, key=lambda uid: damages.get(uid, 0))
+        summary_lines: list[str] = []
         async with SessionLocal() as session:
-            winner = await get_or_create_user(session, winner_discord_id)
-            pool = (await session.execute(select(Item).where(Item.base_value >= 1200).order_by(Item.base_value.desc()).limit(20))).scalars().all()
-            if not pool:
-                pool = (await session.execute(select(Item).order_by(Item.base_value.desc()).limit(20))).scalars().all()
-            reward = self._boss_rng.choice(pool) if pool else None
-            if reward:
-                inv = (await session.execute(select(Inventory).where(and_(Inventory.user_id == winner.id, Inventory.item_id == reward.id, Inventory.weapon_level.is_(None))))).scalar_one_or_none()
-                if inv:
-                    inv.qty += 1
+            high_tier_pool = (
+                await session.execute(select(Item).where(Item.base_value >= 2400).order_by(Item.base_value.desc()).limit(30))
+            ).scalars().all()
+            participation_pool = (
+                await session.execute(select(Item).where(Item.base_value >= 600).order_by(Item.base_value.desc()).limit(60))
+            ).scalars().all()
+            if not participation_pool:
+                participation_pool = (await session.execute(select(Item).order_by(Item.base_value.desc()).limit(60))).scalars().all()
+
+            for uid in survivors:
+                user = await get_or_create_user(session, uid)
+                xp_gain = self._boss_rng.randint(30, 70)
+                scrap_gain = self._boss_rng.randint(90, 220)
+                user.xp += xp_gain
+                user.credits += scrap_gain
+                user.level = level_from_xp(user.xp)
+
+                reward_item = None
+                if uid == winner_discord_id:
+                    reward_item = self._boss_rng.choice(high_tier_pool) if high_tier_pool else None
+                    if reward_item is None and participation_pool:
+                        reward_item = self._boss_rng.choice(participation_pool)
+                elif participation_pool and self._boss_rng.random() < 0.85:
+                    reward_item = self._boss_rng.choice(participation_pool)
+
+                if reward_item:
+                    inv = (
+                        await session.execute(
+                            select(Inventory).where(
+                                and_(Inventory.user_id == user.id, Inventory.item_id == reward_item.id, Inventory.weapon_level.is_(None))
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if inv:
+                        inv.qty += 1
+                    else:
+                        session.add(Inventory(user_id=user.id, item_id=reward_item.id, qty=1))
+
+                if uid == winner_discord_id:
+                    summary_lines.append(
+                        f"🏆 MVP <@{uid}> dealt {damages.get(uid, 0)} damage and got top reward"
+                        + (f" **{reward_item.name}**" if reward_item else "")
+                        + f" (+{xp_gain} XP, +{scrap_gain} Scrap)."
+                    )
                 else:
-                    session.add(Inventory(user_id=winner.id, item_id=reward.id, qty=1))
+                    summary_lines.append(
+                        f"• <@{uid}> participation rewards: +{xp_gain} XP, +{scrap_gain} Scrap"
+                        + (f", **{reward_item.name}**." if reward_item else ".")
+                    )
+
             await session.commit()
-        await channel.send(f"✅ **{spawn.name}** has been defeated. MVP: <@{winner_discord_id}> ({damages[winner_discord_id]} damage)." + (f" Reward: **{reward.name}**" if reward else ""))
+
+        await channel.send(
+            f"✅ **{spawn.name}** has been defeated. Survivors rewarded; downed raiders receive nothing.\n"
+            + "\n".join(summary_lines)
+        )
 
     @tasks.loop(seconds=60)
     async def boss_scheduler(self) -> None:
@@ -1016,6 +1107,9 @@ class GameplayCog(commands.Cog):
             if len(picks) >= 25:
                 break
         return picks
+
+    async def trade_requested_item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[int]]:
+        return await self.inventory_item_autocomplete(interaction, current)
 
     async def all_item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[int]]:
         async with SessionLocal() as session:
@@ -1517,6 +1611,44 @@ class GameplayCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+    @app_commands.command(description="Server-wide raider leaderboard with hard-work scoring.")
+    async def leaderboard(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message("Guild-only command.", ephemeral=True)
+            return
+
+        member_ids = {member.id for member in interaction.guild.members if not member.bot}
+        if not member_ids:
+            await interaction.response.send_message("No eligible members found.", ephemeral=True)
+            return
+
+        async with SessionLocal() as session:
+            users = (await session.execute(select(User).where(User.discord_id.in_(member_ids)))).scalars().all()
+
+        if not users:
+            await interaction.response.send_message("No raider data found for this server yet.", ephemeral=True)
+            return
+
+        def hard_work_score(u: User) -> int:
+            prog = dict(u.progression_json or {})
+            return int(prog.get("work_runs", 0)) * 5 + int(prog.get("scavenge_runs", 0)) * 2 + int(prog.get("salvage_runs", 0)) * 2 + int(prog.get("courier_runs", 0)) * 3 + int(prog.get("raids_won", 0)) * 4
+
+        ranked = sorted(users, key=lambda u: (hard_work_score(u), u.xp, u.credits), reverse=True)[:10]
+        lines = []
+        for idx, user in enumerate(ranked, start=1):
+            member = interaction.guild.get_member(user.discord_id)
+            name = member.display_name if member else f"User {user.discord_id}"
+            lines.append(f"`#{idx}` **{name}** — Work Score `{hard_work_score(user)}` | Lv `{user.level}` | XP `{user.xp}`")
+
+        embed = self._styled_embed(title=f"{interaction.guild.name} Leaderboard")
+        embed.description = "\n".join(lines)
+        embed.add_field(
+            name="Hard-Worker Reward Tiers",
+            value="• Score 250+: bonus work loot rolls become more likely.\n• Score 500+: higher chance for rare work finds.\n• Score 900+: premium raid loot odds increase.",
+            inline=False,
+        )
+        await interaction.response.send_message(embed=embed)
+
     @app_commands.command(description="Show action cooldowns.")
     async def cooldowns(self, interaction: discord.Interaction) -> None:
         async with SessionLocal() as session:
@@ -1617,6 +1749,49 @@ class GameplayCog(commands.Cog):
                 await interaction.response.send_message(str(exc))
                 return
         await interaction.response.send_message(result.message)
+
+    @app_commands.command(description="Show everything you can craft right now from your inventory.")
+    async def craftables(self, interaction: discord.Interaction) -> None:
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, interaction.user.id)
+            inv_rows = (
+                await session.execute(
+                    select(Inventory, Item)
+                    .join(Item, Inventory.item_id == Item.id)
+                    .where(and_(Inventory.user_id == user.id, Inventory.weapon_level.is_(None), Inventory.qty > 0))
+                )
+            ).all()
+            all_items = (await session.execute(select(Item).order_by(Item.name.asc()))).scalars().all()
+
+        inv_by_source_id: dict[str, int] = {}
+        for inv, item in inv_rows:
+            source_id = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
+            if not source_id:
+                continue
+            inv_by_source_id[source_id] = inv_by_source_id.get(source_id, 0) + int(inv.qty or 0)
+
+        craftables = craftable_items_from_inventory(all_items, inv_by_source_id)
+        if not craftables:
+            await interaction.response.send_message("No craftables available yet. Gather more materials and check again.", ephemeral=True)
+            return
+
+        page_size = 15
+        pages: list[discord.Embed] = []
+        total_pages = max(1, (len(craftables) + page_size - 1) // page_size)
+        for index in range(total_pages):
+            chunk = craftables[index * page_size : (index + 1) * page_size]
+            page = self._styled_embed(title="Craftables")
+            lines: list[str] = []
+            for item in chunk:
+                recipe = crafting_recipe_for_item(item)
+                recipe_line = ", ".join(f"{sid.replace('_', ' ')} x{qty}" for sid, qty in recipe)
+                lines.append(f"• **{item.name}** — {recipe_line}")
+            page.description = "\n".join(lines)
+            page.set_footer(text=f"Page {index + 1}/{total_pages}")
+            pages.append(page)
+
+        view = PaginatedEmbedView(owner_id=interaction.user.id, pages=pages)
+        await interaction.response.send_message(embed=view.current_embed(), view=view, ephemeral=True)
 
     @app_commands.command(description="Show crafting requirements for an item.")
     @app_commands.autocomplete(item_id=craftable_item_autocomplete)
@@ -1908,7 +2083,7 @@ class GameplayCog(commands.Cog):
         )
 
     @app_commands.command(description="Create a pending trade offer.")
-    @app_commands.autocomplete(offered_item_id=inventory_item_autocomplete, requested_item_id=inventory_item_autocomplete)
+    @app_commands.autocomplete(offered_item_id=inventory_item_autocomplete, requested_item_id=trade_requested_item_autocomplete)
     async def trade(
         self,
         interaction: discord.Interaction,
@@ -1948,6 +2123,48 @@ class GameplayCog(commands.Cog):
         async with SessionLocal() as session:
             src = await get_or_create_user(session, interaction.user.id)
             dst = await get_or_create_user(session, target.id)
+
+            if offered_item_id is not None and offered_item_qty > 0:
+                offered_stack = (
+                    await session.execute(
+                        select(Inventory).where(
+                            and_(
+                                Inventory.user_id == src.id,
+                                Inventory.item_id == offered_item_id,
+                                Inventory.weapon_level.is_(None),
+                                Inventory.qty >= offered_item_qty,
+                            )
+                        )
+                    )
+                ).scalar_one_or_none()
+                if offered_stack is None:
+                    await interaction.response.send_message("You do not have enough of the offered item.", ephemeral=True)
+                    return
+
+            if requested_item_id is not None and requested_item_qty > 0:
+                known_item = await session.get(Item, requested_item_id)
+                if known_item is None:
+                    await interaction.response.send_message("Requested item does not exist.", ephemeral=True)
+                    return
+                requester_has_item = (
+                    await session.execute(
+                        select(Inventory).where(
+                            and_(
+                                Inventory.user_id == src.id,
+                                Inventory.item_id == requested_item_id,
+                                Inventory.weapon_level.is_(None),
+                                Inventory.qty > 0,
+                            )
+                        )
+                    )
+                ).scalar_one_or_none()
+                if requester_has_item is None:
+                    await interaction.response.send_message(
+                        "You can only request item types you already own at least once.",
+                        ephemeral=True,
+                    )
+                    return
+
             existing_pending = (
                 await session.execute(
                     select(Trade).where(

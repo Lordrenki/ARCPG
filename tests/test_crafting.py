@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from arkpg.db.models import ItemType, Rarity
-from arkpg.game.crafting import craft_autocomplete_matches, crafting_recipe_for_item, is_craftable_item
+from arkpg.game.crafting import craft_autocomplete_matches, craftable_items_from_inventory, crafting_recipe_for_item, is_craftable_item
 
 
 def _item(
@@ -66,3 +66,13 @@ def test_craft_autocomplete_matches_shield_source_id_formats() -> None:
     assert craft_autocomplete_matches(shield, "light_shield")
     assert craft_autocomplete_matches(shield, "light shield")
     assert craft_autocomplete_matches(shield, "42")
+
+
+def test_craftables_from_inventory_filters_by_recipe() -> None:
+    bandage = _item("bandage", "quick use", ItemType.GADGET, Rarity.COMMON, description="restores health", name="Bandage")
+    herb = _item("herbal_bandage", "quick use", ItemType.GADGET, Rarity.UNCOMMON, description="restores health", name="Herbal Bandage", item_id=2)
+
+    craftables = craftable_items_from_inventory([bandage, herb], {"fabric": 7, "bandage": 1, "antiseptic": 2, "chemicals": 2})
+
+    assert bandage in craftables
+    assert herb not in craftables

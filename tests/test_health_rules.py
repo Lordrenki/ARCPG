@@ -16,3 +16,9 @@ def test_survivability_consumes_heal_and_restores_positive_hp() -> None:
     assert outcome["healing_used"] is True
     assert outcome["health_after"] == 22
     assert user.stats["loadout"]["healing"] is None
+
+
+def test_adrenaline_shot_heals_65() -> None:
+    from arkpg.game.loadout import HEALING_ITEM_FLAT
+
+    assert HEALING_ITEM_FLAT["adrenaline_shot"] == 65
