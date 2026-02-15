@@ -20,6 +20,16 @@ def is_craftable_item(item: Item) -> bool:
     return is_weapon(item) or is_gadget(item) or is_healing(item) or is_shield(item)
 
 
+def craft_autocomplete_matches(item: Item, query: str) -> bool:
+    needle = query.strip().lower()
+    if not needle:
+        return True
+
+    source_id = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
+    source_id_spaced = source_id.replace("_", " ") if source_id else ""
+    return needle in item.name.lower() or needle in str(item.id) or needle in source_id or needle in source_id_spaced
+
+
 def crafting_recipe_for_item(item: Item) -> list[tuple[str, int]]:
     rarity = item.rarity.value
     tier = RARITY_TIER.get(rarity, 1)

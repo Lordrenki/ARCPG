@@ -1,11 +1,22 @@
 from types import SimpleNamespace
 
 from arkpg.db.models import ItemType, Rarity
-from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
+from arkpg.game.crafting import craft_autocomplete_matches, crafting_recipe_for_item, is_craftable_item
 
 
-def _item(source_id: str, source_type: str, item_type: ItemType, rarity: Rarity, description: str = ""):
+def _item(
+    source_id: str,
+    source_type: str,
+    item_type: ItemType,
+    rarity: Rarity,
+    description: str = "",
+    *,
+    name: str | None = None,
+    item_id: int = 1,
+):
     return SimpleNamespace(
+        id=item_id,
+        name=name or source_id,
         type=item_type,
         rarity=rarity,
         metadata_json={"source_id": source_id, "source_type": source_type, "description": description},
@@ -40,3 +51,18 @@ def test_legendary_weapon_recipe_has_high_tier_materials() -> None:
 def test_bandage_recipe_requires_only_fabric() -> None:
     bandage = _item("bandage", "quick use", ItemType.GADGET, Rarity.COMMON, description="restores health")
     assert crafting_recipe_for_item(bandage) == [("fabric", 5)]
+
+
+def test_craft_autocomplete_matches_shield_source_id_formats() -> None:
+    shield = _item(
+        "light_shield",
+        "shield",
+        ItemType.ARMOR,
+        Rarity.UNCOMMON,
+        name="Light Shield",
+        item_id=42,
+    )
+
+    assert craft_autocomplete_matches(shield, "light_shield")
+    assert craft_autocomplete_matches(shield, "light shield")
+    assert craft_autocomplete_matches(shield, "42")
