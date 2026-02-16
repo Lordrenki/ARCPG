@@ -1109,7 +1109,7 @@ class GameplayCog(commands.Cog):
         return picks
 
     async def trade_requested_item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[int]]:
-        return await self.inventory_item_autocomplete(interaction, current)
+        return await self.all_item_autocomplete(interaction, current)
 
     async def all_item_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[int]]:
         async with SessionLocal() as session:
@@ -2145,24 +2145,6 @@ class GameplayCog(commands.Cog):
                 known_item = await session.get(Item, requested_item_id)
                 if known_item is None:
                     await interaction.response.send_message("Requested item does not exist.", ephemeral=True)
-                    return
-                requester_has_item = (
-                    await session.execute(
-                        select(Inventory).where(
-                            and_(
-                                Inventory.user_id == src.id,
-                                Inventory.item_id == requested_item_id,
-                                Inventory.weapon_level.is_(None),
-                                Inventory.qty > 0,
-                            )
-                        )
-                    )
-                ).scalar_one_or_none()
-                if requester_has_item is None:
-                    await interaction.response.send_message(
-                        "You can only request item types you already own at least once.",
-                        ephemeral=True,
-                    )
                     return
 
             existing_pending = (
