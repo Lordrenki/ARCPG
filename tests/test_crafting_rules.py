@@ -56,3 +56,23 @@ def test_weapon_mark_tiers_increase_recipe_requirements() -> None:
     assert "electrical_components" in r2
     assert "arc_alloy" in r3
     assert "advanced_mechanical_components" in r4
+
+
+def test_legacy_medium_heavy_shields_still_skip_blueprints() -> None:
+    medium = SimpleNamespace(
+        name="Medium Shield",
+        type=ItemType.ARMOR,
+        rarity=Rarity.RARE,
+        metadata_json={"description": "legacy row"},
+    )
+    heavy = SimpleNamespace(
+        name="Heavy Shield",
+        type=ItemType.ARMOR,
+        rarity=Rarity.EPIC,
+        metadata_json={"description": "legacy row"},
+    )
+
+    assert _blueprint_source_ids_for_item(medium) == []
+    assert _blueprint_source_ids_for_item(heavy) == []
+    assert is_craftable_item(medium)
+    assert is_craftable_item(heavy)

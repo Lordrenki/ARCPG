@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from arkpg.db.models import Item
-from arkpg.game.loadout import is_gadget, is_healing, is_shield, is_weapon
+from arkpg.game.loadout import is_gadget, is_healing, is_shield, is_weapon, source_id as item_source_id
 
 RARITY_TIER = {"common": 1, "uncommon": 2, "rare": 3, "epic": 4, "legendary": 5}
 
@@ -25,15 +25,15 @@ def craft_autocomplete_matches(item: Item, query: str) -> bool:
     if not needle:
         return True
 
-    source_id = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
-    source_id_spaced = source_id.replace("_", " ") if source_id else ""
-    return needle in item.name.lower() or needle in str(item.id) or needle in source_id or needle in source_id_spaced
+    sid = item_source_id(item)
+    source_id_spaced = sid.replace("_", " ") if sid else ""
+    return needle in item.name.lower() or needle in str(item.id) or needle in sid or needle in source_id_spaced
 
 
 def crafting_recipe_for_item(item: Item) -> list[tuple[str, int]]:
     rarity = item.rarity.value
     tier = RARITY_TIER.get(rarity, 1)
-    source_id = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
+    source_id = item_source_id(item)
 
     if source_id == "bandage":
         return [("fabric", 5)]
@@ -89,8 +89,8 @@ def crafting_recipe_for_item(item: Item) -> list[tuple[str, int]]:
 def craftable_items_from_inventory(items: list[Item], inventory_by_source_id: dict[str, int]) -> list[Item]:
     craftable: list[Item] = []
     for item in items:
-        source_id = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
-        if not source_id:
+        sid = item_source_id(item)
+        if not sid:
             continue
         if not is_craftable_item(item):
             continue

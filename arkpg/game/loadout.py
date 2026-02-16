@@ -35,7 +35,15 @@ def source_type(item: Item) -> str:
 
 
 def source_id(item: Item) -> str:
-    return str((item.metadata_json or {}).get("source_id") or "").strip().lower()
+    sid = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
+    if sid:
+        return sid
+
+    # Backward-compatible fallback for older rows that predate source_id metadata.
+    derived = str(getattr(item, "name", "") or "").strip().lower().replace(" ", "_")
+    if derived in SHIELD_DAMAGE_REDUCTION:
+        return derived
+    return ""
 
 
 def item_description(item: Item) -> str:
@@ -48,7 +56,11 @@ def is_weapon(item: Item) -> bool:
 
 def is_shield(item: Item) -> bool:
     sid = source_id(item)
-    return sid in SHIELD_DAMAGE_REDUCTION or source_type(item) == "shield"
+    if sid in SHIELD_DAMAGE_REDUCTION:
+        return True
+    if source_type(item) == "shield":
+        return True
+    return item.type == ItemType.ARMOR and "shield" in str(getattr(item, "name", "")).lower()
 
 
 def is_healing(item: Item) -> bool:
@@ -131,7 +143,7 @@ def as_item_payload(item: Item) -> dict:
         "name": item.name,
         "rarity": item.rarity.value,
         "value": item.base_value,
-        "source_id": metadata.get("source_id"),
-        "source_type": metadata.get("source_type") or item.type.value,
+        "source_id": source_id(item),
+        "source_type": source_type(item),
         "description": metadata.get("description") or "",
     }

@@ -65,3 +65,20 @@ def test_as_item_payload_contains_description() -> None:
 def test_special_weapon_type_is_supported() -> None:
     equalizer = _item(source_id="equalizer", source_type="special", item_type=ItemType.COMPONENT)
     assert is_weapon(equalizer)
+
+
+def test_legacy_shield_rows_without_source_metadata_are_detected() -> None:
+    legacy_shield = SimpleNamespace(
+        id=9,
+        name="Medium Shield",
+        type=ItemType.ARMOR,
+        rarity=Rarity.RARE,
+        base_value=2000,
+        metadata_json={"description": "legacy row"},
+    )
+
+    payload = as_item_payload(legacy_shield)
+
+    assert is_shield(legacy_shield)
+    assert payload["source_id"] == "medium_shield"
+    assert shield_reduction(payload) == SHIELD_DAMAGE_REDUCTION["medium_shield"]

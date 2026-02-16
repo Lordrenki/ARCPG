@@ -23,7 +23,7 @@ from arkpg.game.deployments import deployment_end, make_seed, resolve_deployment
 from arkpg.game.crafting import crafting_recipe_for_item, is_craftable_item
 from arkpg.game.economy import claim_cooldown_remaining_seconds, compute_idle_rewards, level_from_xp, scale_stats_with_level
 from arkpg.game.profile_backgrounds import DEFAULT_BACKGROUND_ID, normalize_collected_background_ids
-from arkpg.game.loadout import as_item_payload, gadget_utility_from_payload, healing_amount, is_shield, is_weapon, item_power_from_payload, shield_reduction
+from arkpg.game.loadout import as_item_payload, gadget_utility_from_payload, healing_amount, is_shield, is_weapon, item_power_from_payload, shield_reduction, source_id as item_source_id
 from arkpg.game.progression import EventBus
 
 
@@ -443,7 +443,7 @@ async def get_user_inventory_items(session: AsyncSession, user: User) -> list[tu
 
 
 def _blueprint_source_ids_for_item(item: Item) -> list[str]:
-    crafted_source_id = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
+    crafted_source_id = item_source_id(item)
     if not crafted_source_id:
         return []
 
@@ -467,7 +467,7 @@ async def craft_item(session: AsyncSession, discord_id: int, item_id: int, qty: 
         raise ValueError("Item not found.")
 
     recipe = crafting_recipe_for_item(item)
-    crafted_source_id = str((item.metadata_json or {}).get("source_id") or "").strip().lower()
+    crafted_source_id = item_source_id(item)
     if not crafted_source_id:
         raise ValueError("Crafting is blocked because this item has no source id metadata.")
 
