@@ -322,23 +322,31 @@ class ActivityService:
         rng = random.Random(seed)
         items = (await self.session.execute(select(Item))).scalars().all()
         non_weapon_items = [item for item in items if item.type != ItemType.WEAPON]
+        non_fabric_items = [
+            item
+            for item in items
+            if str((item.metadata_json or {}).get("source_id") or "").strip().lower() != "fabric"
+        ]
         level_one_weapons = [item for item in items if item.type == ItemType.WEAPON and item.name.strip().endswith(" I")]
         fabric_item = next((it for it in items if str((it.metadata_json or {}).get("source_id") or "").strip().lower() == "fabric"), None)
         if level_one_weapons and rng.random() < 0.04:
             picked = rng.choice(level_one_weapons)
             qty = 1
-        elif fabric_item and rng.random() < 0.40:
-            picked = fabric_item
-            qty = rng.randint(2, 4)
         else:
-            picked = rng.choice(non_weapon_items or items)
+            picked = rng.choice(non_fabric_items or non_weapon_items or items)
             qty = rng.randint(1, 2)
+        fabric_qty = rng.randint(1, 5) if fabric_item else 0
         credits = rng.randint(20, 80)
         event = "mini-event triggered" if rng.random() < 0.2 else "quiet pickup"
         await InventoryService(self.session).add_item(user.id, picked.id, qty)
+        awarded_items = [(picked.id, qty)]
+        if fabric_item and fabric_qty > 0:
+            await InventoryService(self.session).add_item(user.id, fabric_item.id, fabric_qty)
+            awarded_items.append((fabric_item.id, fabric_qty))
         user.credits += credits
         self.session.add(ActivityAttempt(user_id=user.id, activity_type="scavenge", seed=seed, result={"item_id": picked.id, "qty": qty, "credits": credits, "event": event}))
-        return ActivityResult(seed, True, credits, [(picked.id, qty)], f"Recovered {picked.name} x{qty} ({event}).")
+        fabric_note = f" + Fabric x{fabric_qty}" if fabric_qty > 0 else ""
+        return ActivityResult(seed, True, credits, awarded_items, f"Recovered {picked.name} x{qty}{fabric_note} ({event}).")
 
     async def salvage(self, user: User, source_id: str | None = None) -> ActivityResult:
         await self._check_cd(user.id, "salvage", 60)
