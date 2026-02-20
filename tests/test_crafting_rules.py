@@ -13,19 +13,23 @@ def _item(source_id: str, source_type: str, item_type: ItemType, rarity: Rarity)
     )
 
 
-def test_medium_and_heavy_shields_are_craftable_without_blueprint() -> None:
+def test_light_medium_and_heavy_shields_are_craftable_without_blueprint() -> None:
+    light = _item("light_shield", "shield", ItemType.ARMOR, Rarity.UNCOMMON)
     medium = _item("medium_shield", "shield", ItemType.ARMOR, Rarity.RARE)
     heavy = _item("heavy_shield", "shield", ItemType.ARMOR, Rarity.EPIC)
 
+    assert is_craftable_item(light)
     assert is_craftable_item(medium)
     assert is_craftable_item(heavy)
+    assert _blueprint_source_ids_for_item(light) == []
     assert _blueprint_source_ids_for_item(medium) == []
     assert _blueprint_source_ids_for_item(heavy) == []
 
+    light_recipe = dict(crafting_recipe_for_item(light))
     medium_recipe = dict(crafting_recipe_for_item(medium))
     heavy_recipe = dict(crafting_recipe_for_item(heavy))
 
-    assert medium_recipe["electrical_components"] >= 4
+    assert medium_recipe["electrical_components"] > light_recipe["electrical_components"]
     assert heavy_recipe["electrical_components"] > medium_recipe["electrical_components"]
     assert "arc_alloy" in heavy_recipe
 
@@ -58,7 +62,13 @@ def test_weapon_mark_tiers_increase_recipe_requirements() -> None:
     assert "advanced_mechanical_components" in r4
 
 
-def test_legacy_medium_heavy_shields_still_skip_blueprints() -> None:
+def test_legacy_light_medium_heavy_shields_still_skip_blueprints() -> None:
+    light = SimpleNamespace(
+        name="Light Shield",
+        type=ItemType.ARMOR,
+        rarity=Rarity.UNCOMMON,
+        metadata_json={"description": "legacy row"},
+    )
     medium = SimpleNamespace(
         name="Medium Shield",
         type=ItemType.ARMOR,
@@ -72,7 +82,9 @@ def test_legacy_medium_heavy_shields_still_skip_blueprints() -> None:
         metadata_json={"description": "legacy row"},
     )
 
+    assert _blueprint_source_ids_for_item(light) == []
     assert _blueprint_source_ids_for_item(medium) == []
     assert _blueprint_source_ids_for_item(heavy) == []
+    assert is_craftable_item(light)
     assert is_craftable_item(medium)
     assert is_craftable_item(heavy)

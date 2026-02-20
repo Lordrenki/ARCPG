@@ -447,7 +447,7 @@ def _blueprint_source_ids_for_item(item: Item) -> list[str]:
     if not crafted_source_id:
         return []
 
-    if is_shield(item) and crafted_source_id in {"medium_shield", "heavy_shield"}:
+    if is_shield(item) and crafted_source_id in {"light_shield", "medium_shield", "heavy_shield"}:
         return []
 
     candidates: list[str] = [f"{crafted_source_id}_blueprint"]

@@ -28,6 +28,9 @@ def _repo_items_path() -> Path:
 def _repo_item_source_paths() -> tuple[Path, ...]:
     db_root = Path(__file__).resolve().parents[1] / "db"
     return (
+        # Keep the canonical full catalog first so item families not split into
+        # per-category files (e.g., shields/armor) are still seeded.
+        db_root / "items.json",
         db_root / "gadgets_quick_use_only.json",
         db_root / "healing_items.json",
         db_root / "weapons.json",
