@@ -19,3 +19,12 @@ def test_filter_items_for_zone_prefers_zone_tags() -> None:
     arc_items = filter_items_for_zone("ARC Site")
     assert arc_items
     assert any("arc" in item.found_in for item in arc_items)
+
+
+def test_load_items_includes_shield_tiers() -> None:
+    items = load_items()
+    source_ids = {item.id for item in items}
+
+    assert "light_shield" in source_ids
+    assert "medium_shield" in source_ids
+    assert "heavy_shield" in source_ids
